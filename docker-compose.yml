@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: site-twilight-db
+    environment:
+      POSTGRES_DB: site_twilight
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: postgres -c ssl=off
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: site-twilight-web
+    volumes:
+      - .:/app
+    ports:
+      - "3476:8000"
+    environment:
+      DATABASE_URL: "postgres://postgres:postgres@db:5432/site_twilight?sslmode=disable"
+      SECRET_KEY: django-insecure-change-this-in-production
+      DEBUG: "True"
+      DEV: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      PORT: "8000"
+      ROBLOX_CLIENT_ID: ${ROBLOX_CLIENT_ID}
+      ROBLOX_CLIENT_SECRET: ${ROBLOX_CLIENT_SECRET}
+      ROBLOX_REDIRECT_URI: ${ROBLOX_REDIRECT_URI}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+volumes:
+  postgres_data:
