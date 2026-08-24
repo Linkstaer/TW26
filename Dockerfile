@@ -32,6 +32,4 @@ RUN SECRET_KEY=build-only python manage.py collectstatic --noinput
 
 EXPOSE $PORT
 # migrate + ensure_admin corren en runtime: en build no hay base de datos
-CMD python manage.py migrate --noinput && \
-    python manage.py ensure_admin && \
-    gunicorn site_twilight.wsgi:application --bind 0.0.0.0:${PORT:-8000}
+CMD python manage.py migrate --noinput && (python manage.py ensure_admin || echo '[warn] ensure_admin fallo, continuando') && echo "[boot] iniciando gunicorn en 0.0.0.0:${PORT:-8000}" && gunicorn site_twilight.wsgi:application --bind 0.0.0.0:${PORT:-8000} --access-logfile - --error-logfile - --log-level info
