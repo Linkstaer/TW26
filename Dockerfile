@@ -25,13 +25,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application - copy everything including site_twilight folder
 COPY . .
 
-# Create emergency admin
 WORKDIR /app/site_twilight
-RUN python manage.py ensure_admin
 
-# Collect static files
-RUN python manage.py collectstatic --noinput
+# Collect static files (no requiere base de datos)
+RUN SECRET_KEY=build-only python manage.py collectstatic --noinput
 
 EXPOSE $PORT
+# migrate + ensure_admin corren en runtime: en build no hay base de datos
 CMD python manage.py migrate --noinput && \
-    gunicorn site_twilight.wsgi:application --bind 0.0.0.0:$PORT
+    python manage.py ensure_admin && \
+    gunicorn site_twilight.wsgi:application --bind 0.0.0.0:${PORT:-8000}
