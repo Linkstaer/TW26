@@ -153,8 +153,22 @@
           </div>
 
           <div class="faction-footer">
-            <button 
-              v-if="!isMemberOf(faction.id) && faction.allow_applications"
+            <div v-if="isFactionAdmin" class="admin-actions">
+              <button
+                class="apply-btn admin-manage-btn"
+                @click.stop="$router.push(`/dashboard/factions/manage/${faction.id}`)"
+              >
+                GESTIONAR
+              </button>
+              <button
+                class="apply-btn admin-view-btn"
+                @click.stop="viewFactionMembers(faction)"
+              >
+                VER MIEMBROS
+              </button>
+            </div>
+            <button
+              v-else-if="!isMemberOf(faction.id) && faction.allow_applications"
               class="apply-btn"
               @click.stop="applyToFaction(faction)"
             >
@@ -175,7 +189,7 @@
     <div v-if="showMembersModal" class="modal-overlay" @click="showMembersModal = false">
       <div class="modal-content members-modal" @click.stop>
         <div class="modal-header">
-          <h2>MIEMBROS DE {{ selectedFactionForMembers?.faction_name }}</h2>
+          <h2>MIEMBROS DE {{ selectedFactionForMembers?.faction_name || selectedFactionForMembers?.name }}</h2>
           <button class="close-btn" @click="showMembersModal = false">&times;</button>
         </div>
         <div class="modal-body">
@@ -186,16 +200,16 @@
             <p>NO HAY MIEMBROS EN ESTA FACCIÓN</p>
           </div>
           <div v-else class="members-list">
-            <div v-for="member in factionMembers" :key="member.id" class="member-item">
+            <div v-for="member in factionMembers" :key="member.character_id" class="member-item">
               <div class="member-avatar">
-                {{ member.character.name.charAt(0) }}
+                {{ (member.character_name || '?').charAt(0) }}
               </div>
               <div class="member-info">
-                <span class="member-name">{{ member.character.name }} {{ member.character.surname }}</span>
-                <span class="member-rank">{{ member.rank?.name || 'Sin rango' }}</span>
+                <span class="member-name">{{ member.character_name }}</span>
+                <span class="member-rank">{{ member.rank || 'Sin rango' }}</span>
               </div>
-              <div v-if="member.division" class="member-division">
-                {{ member.division.name }}
+              <div v-if="member.access_card" class="member-division">
+                {{ member.access_card }}
               </div>
             </div>
           </div>
@@ -252,6 +266,8 @@ const router = useRouter()
 
 const loading = ref(true)
 const factions = ref([])
+const currentUser = ref(null)
+const isFactionAdmin = ref(false)
 const myFactions = ref([])
 const myCharacters = ref([])
 const selectedFaction = ref(null)
@@ -330,7 +346,7 @@ const fetchFactionMembers = async (factionId) => {
     const response = await fetch(`/api/factions/${factionId}/members/`)
     if (response.ok) {
       const data = await response.json()
-      factionMembers.value = data.results || data || []
+      factionMembers.value = data.members || data.results || []
     }
   } catch (err) {
     console.error('Error:', err)
@@ -352,10 +368,10 @@ const selectFaction = (faction) => {
   selectedFaction.value = faction
 }
 
-const viewFactionMembers = async (myFaction) => {
-  selectedFactionForMembers.value = myFaction
+const viewFactionMembers = async (faction) => {
+  selectedFactionForMembers.value = faction
   showMembersModal.value = true
-  await fetchFactionMembers(myFaction.faction_id)
+  await fetchFactionMembers(faction.faction_id || faction.id)
 }
 
 const applyToFaction = async (faction) => {
@@ -385,13 +401,45 @@ const applyToFaction = async (faction) => {
   }
 }
 
+const fetchCurrentUser = async () => {
+  try {
+    const res = await fetch('/api/auth/user/')
+    currentUser.value = await res.json()
+    if (currentUser.value?.is_superuser || currentUser.value?.is_staff) {
+      isFactionAdmin.value = true
+      return
+    }
+    // Moderación de facciones también gestiona sin ser miembro
+    const permRes = await fetch('/api/auth/user/permissions/')
+    if (permRes.ok) {
+      const permData = await permRes.json()
+      isFactionAdmin.value = (permData.permissions || []).includes('moderate_factions_full')
+    }
+  } catch { /* noop */ }
+}
+
 onMounted(async () => {
-  await Promise.all([fetchFactions(), fetchMyFactions(), fetchMyCharacters()])
+  await Promise.all([fetchFactions(), fetchMyFactions(), fetchMyCharacters(), fetchCurrentUser()])
   loading.value = false
 })
 </script>
 
 <style scoped>
+.admin-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.admin-actions .apply-btn {
+  flex: 1;
+}
+.admin-manage-btn {
+  border-color: #2ecc71 !important;
+  color: #2ecc71 !important;
+}
+.admin-manage-btn:hover {
+  background: rgba(46, 204, 113, 0.15) !important;
+}
 .page-container {
   min-height: 100vh;
   color: #d8d8d8;

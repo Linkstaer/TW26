@@ -3,18 +3,128 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 
 
+LEVEL_ORDER = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
+
+
 class AccessCard(models.Model):
     """
-    Tarjetas de acceso que pueden ser asignadas a documentos SCP.
-    Los documentos definen qué tarjeta se requiere para acceder a ellos.
+    Tarjetas de acceso asignadas a personajes (vía rango de facción).
+    Determinan la visibilidad en la DB, el acceso a documentos/SCPs
+    y las funcionalidades avanzadas del sitio (spec §2.4).
     """
+
+    class Level(models.TextChoices):
+        L1 = "L1", "Nivel 1"
+        L2 = "L2", "Nivel 2"
+        L3 = "L3", "Nivel 3"
+        L4 = "L4", "Nivel 4"
+        L5 = "L5", "Nivel 5"
+        L6 = "L6", "Nivel 6"
+
+    class CardType(models.TextChoices):
+        STANDARD = "standard", "Estándar"
+        SCIENTIFIC = "scientific", "Scientific Department"
+        ETHICS_COMMITTEE = "ethics_committee", "Comité de Ética"
+        O5_COUNCIL = "o5_council", "Consejo O5"
+        RAISA = "raisa", "RAISA"
+        ADMIN_OFFICE = "admin_office", "Administrators Office"
+        BETA_1 = "beta_1", "Beta-1"
 
     name = models.CharField(max_length=100, unique=True, default="Nueva Tarjeta")
     description = models.TextField(blank=True)
     is_classified = models.BooleanField(default=False)
 
+    level = models.CharField(
+        max_length=4, choices=Level.choices, default=Level.L1,
+        help_text="Nivel de acceso L1-L6",
+    )
+    card_type = models.CharField(
+        max_length=20, choices=CardType.choices, default=CardType.STANDARD,
+        help_text="Casos especiales (O5, RAISA, Beta-1, Comité de Ética...)",
+    )
+
     def __str__(self):
-        return self.name
+        return f"{self.level} - {self.name}"
+
+    # --- Derivados del nivel (spec §2.4 / §4.2) ---
+
+    @property
+    def level_number(self) -> int:
+        return LEVEL_ORDER.get(self.level, 1)
+
+    @property
+    def display_name(self) -> str:
+        """
+        Nombre visible de la tarjeta. Seguridad (spec §2.4):
+        L5 que no es del Comité de Ética se muestra como vista L4/L5 combinada;
+        la tarjeta del Comité de Ética se identifica explícitamente.
+        """
+        if self.level == self.Level.L5:
+            if self.card_type == self.CardType.ETHICS_COMMITTEE:
+                return "L4/L5 - Comité de Ética"
+            return f"L4/L5 - {self.name}"
+        return f"{self.level} - {self.name}"
+
+    def can_view_level(self, level: str) -> bool:
+        return self.level_number >= LEVEL_ORDER.get(level, 99)
+
+    @property
+    def can_view_l1(self):
+        return self.can_view_level("L1")
+
+    @property
+    def can_view_l2(self):
+        return self.can_view_level("L2")
+
+    @property
+    def can_view_l3(self):
+        return self.can_view_level("L3")
+
+    @property
+    def can_view_l4(self):
+        return self.can_view_level("L4")
+
+    @property
+    def can_view_l5(self):
+        return self.can_view_level("L5")
+
+    @property
+    def can_view_l6(self):
+        return self.can_view_level("L6")
+
+    # --- Permisos de edición (spec §3.3 / §5.3) ---
+
+    @property
+    def can_edit_any(self) -> bool:
+        """RAISA / Beta-1 / Administrative Department redactan cualquier documento."""
+        return self.card_type in (
+            self.CardType.RAISA,
+            self.CardType.ADMIN_OFFICE,
+            self.CardType.BETA_1,
+        ) or self.level == self.Level.L6
+
+    @property
+    def can_edit_o5(self) -> bool:
+        """Consejo O5: redacta secciones según nivel de acceso."""
+        return self.card_type == self.CardType.O5_COUNCIL
+
+    @property
+    def can_edit_scd(self) -> bool:
+        """Scientific Department: apéndices y comentarios, no la base."""
+        return self.card_type == self.CardType.SCIENTIFIC
+
+    @classmethod
+    def get_default_card(cls):
+        """Tarjeta L1 por defecto para usuarios sin membresías."""
+        card, _ = cls.objects.get_or_create(
+            name="Nivel 1 - Básico",
+            defaults={
+                "level": cls.Level.L1,
+                "card_type": cls.CardType.STANDARD,
+                "description": "Acceso básico al sitio.",
+            },
+        )
+        return card
 
 
 class FactionType(models.Model):
@@ -117,8 +227,8 @@ class Faction(models.Model):
         """Retorna el nombre según el nivel de acceso del usuario"""
         if self.is_classified and self.facade_name:
             if user:
-                from users.models import User
-
+                if getattr(user, "is_superuser", False):
+                    return self.display_name
                 if hasattr(user, "characters"):
                     highest_card = user.get_highest_access_card()
                     if highest_card and highest_card.level in ["L5", "L6"]:
@@ -441,12 +551,16 @@ class FactionInvitation(models.Model):
             lowest_rank.access_card if lowest_rank else AccessCard.get_default_card()
         )
 
-        CharacterFactionMembership.objects.create(
+        # Reactivar si ya existió una membresía (unique_together character+faction)
+        CharacterFactionMembership.objects.update_or_create(
             character=self.character,
             faction=self.faction,
-            rank=lowest_rank,
-            access_card=access_card,
-            status=CharacterFactionMembership.Status.ACTIVE,
+            defaults={
+                "rank": lowest_rank,
+                "access_card": access_card,
+                "status": CharacterFactionMembership.Status.ACTIVE,
+                "left_at": None,
+            },
         )
 
     def decline(self):

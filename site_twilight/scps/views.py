@@ -52,11 +52,6 @@ def scp_edit(request, scp_id):
     except SCP.DoesNotExist:
         return JsonResponse({"error": "SCP no encontrado"}, status=404)
 
-    # Verificar permisos
-    can_edit, reason = scp.can_user_edit(request.user)
-    if not can_edit:
-        return JsonResponse({"error": reason}, status=403)
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -69,6 +64,14 @@ def scp_edit(request, scp_id):
 
     if not section or content is None:
         return JsonResponse({"error": "Sección y contenido requeridos"}, status=400)
+
+    if section.upper() not in ("L1", "L2", "L3", "L4", "L5", "L6"):
+        return JsonResponse({"error": "Sección inválida"}, status=400)
+
+    # Verificar permisos por sección (O5 redacta solo hasta su nivel, spec §3.3)
+    can_edit, edit_reason = scp.can_user_edit_section(request.user, section)
+    if not can_edit:
+        return JsonResponse({"error": edit_reason}, status=403)
 
     # Guardar contenido anterior
     old_content = getattr(scp, f"content_{section.lower()}", "")
@@ -206,3 +209,210 @@ def document_edit(request, slug):
     )
 
     return JsonResponse({"success": True, "message": "Documento actualizado"})
+
+
+@login_required
+def scp_create(request):
+    """Crear un nuevo archivo SCP. Solo Admins o tarjetas con edición total (spec §3.1)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    card = request.user.get_highest_access_card()
+    if not (request.user.is_superuser or (card and card.can_edit_any)):
+        return JsonResponse({"error": "Sin permisos para crear archivos SCP"}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+    scp_id = (data.get("scp_id") or "").strip()
+    title = (data.get("title") or "").strip()
+
+    if not scp_id or not title:
+        return JsonResponse({"error": "scp_id y title son requeridos"}, status=400)
+
+    if SCP.objects.filter(scp_id__iexact=scp_id).exists():
+        return JsonResponse({"error": "Ya existe un SCP con ese ID"}, status=400)
+
+    scp = SCP.objects.create(
+        scp_id=scp_id,
+        title=title,
+        object_class=data.get("object_class", SCP.ObjectClass.EUCLID),
+        content_l1=data.get("content_l1", ""),
+        content_l2=data.get("content_l2", ""),
+        content_l3=data.get("content_l3", ""),
+        content_l4=data.get("content_l4", ""),
+        content_l5=data.get("content_l5", ""),
+        content_l6=data.get("content_l6", ""),
+        created_by=request.user,
+    )
+
+    return JsonResponse({"success": True, "id": scp.id, "scp_id": scp.scp_id})
+
+
+@login_required
+def scp_add_appendix(request, scp_id):
+    """Agregar un apéndice a un SCP (ScD y superiores, spec §3.3)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    try:
+        scp = SCP.objects.get(id=scp_id, is_active=True, is_deleted=False)
+    except SCP.DoesNotExist:
+        return JsonResponse({"error": "SCP no encontrado"}, status=404)
+
+    can_add, reason = scp.can_user_add_appendix(request.user)
+    if not can_add:
+        return JsonResponse({"error": reason}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+    title = (data.get("title") or "").strip()
+    content = (data.get("content") or "").strip()
+    level = (data.get("level") or "L1").upper()
+
+    if not title or not content:
+        return JsonResponse({"error": "Título y contenido requeridos"}, status=400)
+
+    if level not in ("L1", "L2", "L3", "L4", "L5", "L6"):
+        return JsonResponse({"error": "Nivel inválido"}, status=400)
+
+    from django.utils import timezone
+
+    appendices = list(scp.appendices or [])
+    appendices.append(
+        {
+            "title": title,
+            "content": content,
+            "level": level,
+            "author": request.user.roblox_username,
+            "created_at": timezone.now().isoformat(),
+        }
+    )
+    scp.appendices = appendices
+    scp.save(update_fields=["appendices", "updated_at"])
+
+    SCPEditLog.objects.create(
+        scp=scp,
+        edited_by=request.user,
+        section="appendix",
+        old_content="",
+        new_content=f"{title}: {content}",
+        edit_reason=data.get("reason", ""),
+    )
+
+    return JsonResponse({"success": True, "message": "Apéndice agregado"})
+
+
+def scp_history(request, scp_id):
+    """Versionado interno del SCP (spec §3.1)."""
+    try:
+        scp = SCP.objects.get(id=scp_id)
+    except SCP.DoesNotExist:
+        return JsonResponse({"error": "SCP no encontrado"}, status=404)
+
+    can_edit, _ = scp.can_user_edit(request.user)
+    if not (can_edit or request.user.is_superuser):
+        return JsonResponse({"error": "Sin permisos"}, status=403)
+
+    logs = scp.edit_logs.select_related("edited_by")[:50]
+    return JsonResponse(
+        {
+            "history": [
+                {
+                    "id": log.id,
+                    "section": log.section,
+                    "edited_by": log.edited_by.roblox_username
+                    if log.edited_by
+                    else None,
+                    "edit_reason": log.edit_reason,
+                    "created_at": log.created_at.isoformat(),
+                }
+                for log in logs
+            ]
+        }
+    )
+
+
+def _user_can_create_documents(user) -> bool:
+    """Autorizados para redactar documentación (spec §5.2)."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+
+    card = user.get_highest_access_card()
+    if card and (card.can_edit_any or card.can_edit_o5 or card.can_edit_scd):
+        return True
+
+    # Altos cargos de otras facciones: rango con permisos de gestión
+    from factions.models import CharacterFactionMembership
+
+    return CharacterFactionMembership.objects.filter(
+        character__owner=user,
+        status=CharacterFactionMembership.Status.ACTIVE,
+        rank__can_manage_members=True,
+    ).exists()
+
+
+@login_required
+def document_create(request):
+    """Crear un documento (spec §5.2/§5.3)."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    if not _user_can_create_documents(request.user):
+        return JsonResponse({"error": "Sin permisos para crear documentos"}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+    title = (data.get("title") or "").strip()
+    content = (data.get("content") or "").strip()
+
+    if not title or not content:
+        return JsonResponse({"error": "Título y contenido requeridos"}, status=400)
+
+    min_level = (data.get("min_access_level") or "L1").upper()
+    if min_level not in ("L1", "L2", "L3", "L4", "L5", "L6"):
+        return JsonResponse({"error": "Nivel inválido"}, status=400)
+
+    # El autor no puede publicar por encima de su propio nivel
+    card = request.user.get_highest_access_card()
+    author_level = 6 if request.user.is_superuser else (card.level_number if card else 1)
+    from factions.models import LEVEL_ORDER
+
+    if LEVEL_ORDER.get(min_level, 1) > author_level:
+        return JsonResponse(
+            {"error": "No puedes publicar por encima de tu nivel de acceso"}, status=403
+        )
+
+    from django.utils.text import slugify
+
+    base_slug = slugify(title)[:180] or "documento"
+    slug = base_slug
+    n = 2
+    while Document.objects.filter(slug=slug).exists():
+        slug = f"{base_slug}-{n}"
+        n += 1
+
+    factions = request.user.get_visible_factions()
+    author_faction = factions[0]["name"] if factions else ""
+
+    doc = Document.objects.create(
+        title=title,
+        slug=slug,
+        doc_type=data.get("doc_type", Document.DocType.OTHER),
+        content=content,
+        min_access_level=min_level,
+        author=request.user,
+        author_faction=author_faction,
+    )
+
+    return JsonResponse({"success": True, "id": doc.id, "slug": doc.slug})

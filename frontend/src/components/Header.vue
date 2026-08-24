@@ -362,6 +362,12 @@ const checkSSU = async () => {
   }
 }
 
+// El panel de notificaciones avisa cuando el usuario marca leídas
+const onNotificationsUpdated = (e) => {
+  unreadNotifications.value = e?.detail?.count ?? 0
+}
+window.addEventListener('notifications-updated', onNotificationsUpdated)
+
 // Check notifications
 const checkNotifications = async () => {
   try {
@@ -450,6 +456,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('notifications-updated', onNotificationsUpdated)
   if (eventSource) {
     eventSource.close()
   }

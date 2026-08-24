@@ -19,6 +19,11 @@ import FactionLeaderPanel from "@/views/FactionLeaderPanel.vue"
 import FactionAdminPanel from "@/views/ModerationFactions.vue"
 import CardsAdminPanel from "@/views/ModerationCards.vue"
 import NotificationsPanel from "@/views/NotificationsPanel.vue"
+import SCPDatabase from "@/views/SCPDatabase.vue"
+import Documentacion from "@/views/Documentacion.vue"
+import Anuncios from "@/views/Anuncios.vue"
+import TerminalAI from "@/views/TerminalAI.vue"
+import LoreSuggestions from "@/views/LoreSuggestions.vue"
 
 
 const routes = [
@@ -131,6 +136,36 @@ const routes = [
     path: "/dashboard/notifications",
     name: "NotificationsPanel",
     component: NotificationsPanel,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/dashboard/scps",
+    name: "SCPDatabase",
+    component: SCPDatabase,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/dashboard/documents",
+    name: "Documentacion",
+    component: Documentacion,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/dashboard/announcements",
+    name: "Anuncios",
+    component: Anuncios,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/dashboard/terminal",
+    name: "TerminalAI",
+    component: TerminalAI,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: "/dashboard/lore-suggestions",
+    name: "LoreSuggestions",
+    component: LoreSuggestions,
     meta: { requiresAuth: true }
   },
   // IMPORTANTE: El catch-all debe ser la ÚLTIMA ruta

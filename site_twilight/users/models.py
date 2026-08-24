@@ -59,6 +59,9 @@ class User(AbstractUser):
     is_staff = models.BooleanField(default=False)  # Django admin
     is_superuser = models.BooleanField(default=False)  # Django super admin
 
+    # Boosters: pueden enviar sugerencias de lore (spec, sección final)
+    is_booster = models.BooleanField(default=False)
+
     def has_permission(self, permission: str) -> bool:
         print(f"Checking permission '{permission}' for user {self.username}")  # Debug
 
@@ -129,13 +132,8 @@ class User(AbstractUser):
             if not highest_card:
                 return AccessCard.get_default_card()
 
-            # L5 no visible como L5 si es del Comité de Ética (se muestra como L4/L5 combinada)
-            if (
-                highest_card.level == "L5"
-                and highest_card.card_type == AccessCard.CardType.ETHICS_COMMITTEE
-            ):
-                highest_card.display_name = "L4/L5 - Comité de Ética"
-
+            # La regla de seguridad L5/Comité de Ética (spec §2.4) vive en
+            # AccessCard.display_name, que ahora es una property derivada.
             return highest_card
 
         except ImportError:
@@ -876,3 +874,27 @@ class AuditLog(models.Model):
         }
 
         return cls.objects.create(**log_data)
+
+
+class UsernameHistory(models.Model):
+    """
+    Historial de usernames de Roblox (spec §1.1).
+    Se registra cada vez que el callback OAuth detecta un cambio.
+    """
+
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        related_name="username_history",
+    )
+    old_username = models.CharField(max_length=100)
+    new_username = models.CharField(max_length=100)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Historial de Username"
+        verbose_name_plural = "Historial de Usernames"
+        ordering = ["-changed_at"]
+
+    def __str__(self):
+        return f"{self.user.roblox_id}: {self.old_username} -> {self.new_username}"

@@ -701,7 +701,12 @@
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Facción:</span>
-                  <span class="detail-value faction long-text">{{ selectedCharacter.faction || 'Sin facción' }}</span>
+                  <span class="detail-value faction long-text">
+                    {{ (selectedCharacter.faction_data && selectedCharacter.faction_data.name) || selectedCharacter.faction || 'Sin facción' }}
+                    <span v-if="selectedCharacter.faction_data && selectedCharacter.faction_data.rank" class="rank-info">
+                      / {{ selectedCharacter.faction_data.rank }}
+                    </span>
+                  </span>
                   <button 
                     v-if="isCharacterOwner && !selectedCharacter.faction" 
                     class="faction-apply-btn"

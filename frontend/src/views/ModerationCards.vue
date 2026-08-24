@@ -58,11 +58,11 @@
       <div class="cards-grid">
         <div v-for="card in cards" :key="card.id" class="access-card">
           <div class="card-header">
-            <span class="card-level">{{ card.name }}</span>
+            <span class="card-level">{{ card.level || 'L1' }}</span>
             <span v-if="card.is_classified" class="classified-badge">CLASIFICADO</span>
           </div>
           <div class="card-body">
-            <h3>{{ card.name }}</h3>
+            <h3>{{ card.display_name || card.name }}</h3>
             <p>{{ card.description || 'Sin descripción' }}</p>
           </div>
           <div class="card-footer">
@@ -86,6 +86,24 @@
           <div class="form-group">
             <label>Descripción:</label>
             <textarea v-model="editingCard.description" rows="4"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Nivel de acceso:</label>
+            <select v-model="editingCard.level">
+              <option v-for="l in ['L1','L2','L3','L4','L5','L6']" :key="l" :value="l">{{ l }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Tipo (casos especiales):</label>
+            <select v-model="editingCard.card_type">
+              <option value="standard">Estándar</option>
+              <option value="scientific">Scientific Department</option>
+              <option value="ethics_committee">Comité de Ética</option>
+              <option value="o5_council">Consejo O5</option>
+              <option value="raisa">RAISA</option>
+              <option value="admin_office">Administrators Office</option>
+              <option value="beta_1">Beta-1</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="checkbox-label">
@@ -116,6 +134,24 @@
           <div class="form-group">
             <label>Descripción:</label>
             <textarea v-model="cardForm.description" rows="4" placeholder="Descripción de la tarjeta..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Nivel de acceso:</label>
+            <select v-model="cardForm.level">
+              <option v-for="l in ['L1','L2','L3','L4','L5','L6']" :key="l" :value="l">{{ l }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Tipo (casos especiales):</label>
+            <select v-model="cardForm.card_type">
+              <option value="standard">Estándar</option>
+              <option value="scientific">Scientific Department</option>
+              <option value="ethics_committee">Comité de Ética</option>
+              <option value="o5_council">Consejo O5</option>
+              <option value="raisa">RAISA</option>
+              <option value="admin_office">Administrators Office</option>
+              <option value="beta_1">Beta-1</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="checkbox-label">
@@ -168,7 +204,9 @@ const showNotification = (title, message, type = 'info', duration = 5000) => {
 const cardForm = ref({
   name: '',
   description: '',
-  is_classified: false
+  is_classified: false,
+  level: 'L1',
+  card_type: 'standard'
 })
 
 const updateTime = () => {
@@ -200,7 +238,9 @@ const closeCreateModal = () => {
   cardForm.value = {
     name: '',
     description: '',
-    is_classified: false
+    is_classified: false,
+    level: 'L1',
+    card_type: 'standard'
   }
 }
 

@@ -119,6 +119,16 @@ def faction_list(request):
     # Solo facciones públicas
     factions = Faction.objects.filter(status=Faction.Status.ACTIVE, is_public=True)
 
+    # Las fachadas deben ser indistinguibles para usuarios sin L5+ (spec §2.1):
+    # solo quienes ven el nombre real ven también la marca de clasificada.
+    can_see_classified = False
+    if user.is_authenticated:
+        if user.is_superuser:
+            can_see_classified = True
+        else:
+            card = user.get_highest_access_card()
+            can_see_classified = bool(card and card.level in ["L5", "L6"])
+
     visible_factions = []
     for faction in factions:
         visible_factions.append(
@@ -126,7 +136,7 @@ def faction_list(request):
                 "id": faction.id,
                 "name": faction.get_visible_name(user),
                 "type": faction.faction_type,
-                "is_classified": faction.is_classified,
+                "is_classified": faction.is_classified and can_see_classified,
                 "allow_applications": faction.allow_applications,
                 "description": faction.description,
                 "icon": faction.icon,
@@ -531,9 +541,11 @@ def faction_members(request, faction_id):
     ).select_related("character", "rank", "access_card")
 
     members = []
+    member_owner_ids = set()
     current_user = request.user if request.user.is_authenticated else None
 
     for m in memberships:
+        member_owner_ids.add(m.character.owner_id)
         # Aplicar fachada según nivel de acceso
         character_name = m.character.codename
         if faction.is_classified:
@@ -558,11 +570,11 @@ def faction_members(request, faction_id):
             }
         )
 
-    # Agregar líderes que no tienen membership activa
+    # Agregar líderes que no tienen membership activa.
+    # (Antes comparaba user.id contra ids de personaje: nunca coincidía y
+    # duplicaba al líder con una fila fantasma sin membresía editable.)
     for leader in faction.leaders.all():
-        # Verificar si ya está incluido como miembro
-        leader_character_ids = [m.get("character_id") for m in members]
-        if leader.id not in leader_character_ids:
+        if leader.id not in member_owner_ids:
             # Buscar personaje del líder
             from characters.models import Character
 
@@ -930,12 +942,18 @@ def review_application(request, faction_id, app_id):
             initial_rank.access_card if initial_rank else AccessCard.get_default_card()
         )
 
-        membership = CharacterFactionMembership.objects.create(
+        # (character, faction) es unique_together: si el personaje ya estuvo
+        # en la facción (p. ej. fue expulsado), hay que reactivar esa fila,
+        # no crear una nueva — create() reventaba con IntegrityError.
+        membership, _ = CharacterFactionMembership.objects.update_or_create(
             character=application.character,
             faction=faction,
-            rank=initial_rank,
-            access_card=access_card,
-            status=CharacterFactionMembership.Status.ACTIVE,
+            defaults={
+                "rank": initial_rank,
+                "access_card": access_card,
+                "status": CharacterFactionMembership.Status.ACTIVE,
+                "left_at": None,
+            },
         )
 
         # Crear log
@@ -1065,6 +1083,9 @@ def access_cards_list(request):
                 "name": card.name,
                 "description": card.description,
                 "is_classified": card.is_classified,
+                "level": card.level,
+                "card_type": card.card_type,
+                "display_name": card.display_name,
             }
         )
 
@@ -1087,10 +1108,19 @@ def create_access_card(request):
         if not name:
             return JsonResponse({"error": "El nombre es requerido"}, status=400)
 
+        level = data.get("level", AccessCard.Level.L1)
+        card_type = data.get("card_type", AccessCard.CardType.STANDARD)
+        if level not in AccessCard.Level.values:
+            return JsonResponse({"error": "Nivel inválido"}, status=400)
+        if card_type not in AccessCard.CardType.values:
+            return JsonResponse({"error": "Tipo de tarjeta inválido"}, status=400)
+
         card = AccessCard.objects.create(
             name=name,
             description=data.get("description", ""),
             is_classified=data.get("is_classified", False),
+            level=level,
+            card_type=card_type,
         )
 
         return JsonResponse(
@@ -1114,6 +1144,9 @@ def access_card_detail(request, card_id):
             "name": card.name,
             "description": card.description,
             "is_classified": card.is_classified,
+            "level": card.level,
+            "card_type": card.card_type,
+            "display_name": card.display_name,
         }
     )
 
@@ -1364,6 +1397,8 @@ def notifications_list(request):
                 "title": notif.title,
                 "message": notif.message,
                 "is_read": notif.is_read,
+                # Para poder navegar al panel correspondiente desde la notificación
+                "faction_id": notif.related_faction_id,
                 "created_at": notif.created_at.isoformat()
                 if notif.created_at
                 else None,
@@ -1447,6 +1482,9 @@ def create_faction_rank(request, faction_id):
     if not name:
         return JsonResponse({"error": "El nombre es requerido"}, status=400)
 
+    if FactionRank.objects.filter(faction=faction, name=name).exists():
+        return JsonResponse({"error": "Ya existe un rango con ese nombre"}, status=400)
+
     # Obtener la tarjeta de acceso si se especificó
     access_card_obj = None
     if access_card:
@@ -1455,9 +1493,14 @@ def create_faction_rank(request, faction_id):
         except AccessCard.DoesNotExist:
             pass
 
-    # Calcular nivel del rango
-    level = 1
-    if access_card_obj:
+    # Nivel jerárquico: define el bracket (1-25 bajo, 26-50 medio,
+    # 51-75 alto, 76-100 alto mando). Se respeta el enviado; si no
+    # viene, se deriva de la tarjeta.
+    try:
+        level = int(data.get("level") or 0)
+    except (TypeError, ValueError):
+        level = 0
+    if not 1 <= level <= 100:
         level_map = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
         level = level_map.get(access_card, 1)
 
@@ -1475,6 +1518,98 @@ def create_faction_rank(request, faction_id):
     return JsonResponse(
         {"success": True, "rank_id": rank.id, "message": "Rango creado"}
     )
+
+
+@login_required
+@csrf_exempt
+def update_faction_rank(request, faction_id, rank_id):
+    """Editar un rango: nombre, nivel (bracket), permisos y tarjeta."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    try:
+        faction = Faction.objects.get(id=faction_id)
+        rank = FactionRank.objects.get(id=rank_id, faction=faction)
+    except (Faction.DoesNotExist, FactionRank.DoesNotExist):
+        return JsonResponse({"error": "Rango no encontrado"}, status=404)
+
+    if request.user not in faction.leaders.all():
+        if not request.user.is_superuser:
+            return JsonResponse({"error": "No tienes permisos"}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+    name = (data.get("name") or rank.name).strip()
+    if (
+        name != rank.name
+        and FactionRank.objects.filter(faction=faction, name=name).exists()
+    ):
+        return JsonResponse({"error": "Ya existe un rango con ese nombre"}, status=400)
+    rank.name = name
+
+    if "level" in data:
+        try:
+            level = int(data.get("level"))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Nivel inválido"}, status=400)
+        if not 1 <= level <= 100:
+            return JsonResponse({"error": "El nivel debe estar entre 1 y 100"}, status=400)
+        rank.level = level
+
+    for flag in ("can_manage_members", "can_review_applications", "can_assign_ranks"):
+        if flag in data:
+            setattr(rank, flag, bool(data[flag]))
+
+    # Tarjeta: solo admins (los líderes no gestionan tarjetas)
+    if "access_card_id" in data and request.user.is_superuser:
+        card_id = data.get("access_card_id")
+        if card_id:
+            try:
+                rank.access_card = AccessCard.objects.get(id=card_id)
+            except AccessCard.DoesNotExist:
+                return JsonResponse({"error": "Tarjeta no encontrada"}, status=404)
+        else:
+            rank.access_card = None
+
+    rank.save()
+    return JsonResponse({"success": True, "message": "Rango actualizado"})
+
+
+@login_required
+@csrf_exempt
+def delete_faction_rank(request, faction_id, rank_id):
+    """Eliminar un rango sin miembros asignados."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Método no permitido"}, status=405)
+
+    try:
+        faction = Faction.objects.get(id=faction_id)
+        rank = FactionRank.objects.get(id=rank_id, faction=faction)
+    except (Faction.DoesNotExist, FactionRank.DoesNotExist):
+        return JsonResponse({"error": "Rango no encontrado"}, status=404)
+
+    if request.user not in faction.leaders.all():
+        if not request.user.is_superuser:
+            return JsonResponse({"error": "No tienes permisos"}, status=403)
+
+    in_use = CharacterFactionMembership.objects.filter(
+        rank=rank, status=CharacterFactionMembership.Status.ACTIVE
+    ).count()
+    if in_use:
+        return JsonResponse(
+            {"error": f"No se puede eliminar: {in_use} miembro(s) tienen este rango. Reasígnalos primero."},
+            status=400,
+        )
+
+    if faction.default_rank_id == rank.id:
+        faction.default_rank = None
+        faction.save(update_fields=["default_rank"])
+
+    rank.delete()
+    return JsonResponse({"success": True, "message": "Rango eliminado"})
 
 
 @login_required
@@ -1625,6 +1760,15 @@ def update_access_card(request, card_id):
         card.name = data.get("name", card.name)
         card.description = data.get("description", card.description)
         card.is_classified = data.get("is_classified", card.is_classified)
+
+        level = data.get("level", card.level)
+        card_type = data.get("card_type", card.card_type)
+        if level not in AccessCard.Level.values:
+            return JsonResponse({"error": "Nivel inválido"}, status=400)
+        if card_type not in AccessCard.CardType.values:
+            return JsonResponse({"error": "Tipo de tarjeta inválido"}, status=400)
+        card.level = level
+        card.card_type = card_type
         card.save()
 
         return JsonResponse({"success": True, "message": "Tarjeta actualizada"})

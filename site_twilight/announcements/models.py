@@ -251,3 +251,46 @@ class Notification(models.Model):
 
 
 from django.utils import timezone
+
+
+class LoreSuggestion(models.Model):
+    """
+    Sistema de sugerencias sobre Lore para los Boosters (spec, sección final).
+    Los boosters proponen ideas de lore; el staff las revisa.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        APPROVED = "approved", "Aprobada"
+        REJECTED = "rejected", "Rechazada"
+
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="lore_suggestions",
+    )
+    title = models.CharField(max_length=200)
+    content = models.TextField(validators=[MaxLengthValidator(10000)])
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="lore_suggestions_reviewed",
+    )
+    review_notes = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Sugerencia de Lore"
+        verbose_name_plural = "Sugerencias de Lore"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.title} ({self.author.roblox_username})"

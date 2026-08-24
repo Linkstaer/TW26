@@ -57,6 +57,9 @@
           <button v-if="notif.type === 'faction_invitation' && !notif.is_read" class="respond-btn" @click.stop="respondToInvitation(notif)">
             RESPONDER
           </button>
+          <button v-if="notif.type === 'faction_application' && notif.faction_id" class="respond-btn" @click.stop="goToApplications(notif)">
+            GESTIONAR
+          </button>
           <button v-if="!notif.is_read" class="read-btn" @click.stop="markAsRead(notif.id)">
             ✓
           </button>
@@ -85,10 +88,24 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 
 const loading = ref(true)
 const notifications = ref([])
 const unreadCount = ref(0)
+const router = useRouter()
+
+const goToApplications = (notif) => {
+  if (!notif.is_read) markAsRead(notif.id)
+  router.push(`/dashboard/factions/manage/${notif.faction_id}`)
+}
+
+// Mantener sincronizado el badge del Header (misma SPA, sin recarga)
+const broadcastUnread = () => {
+  window.dispatchEvent(
+    new CustomEvent('notifications-updated', { detail: { count: unreadCount.value } })
+  )
+}
 const respondingInvitation = ref(null)
 
 const fetchNotifications = async () => {
@@ -124,6 +141,7 @@ const markAsRead = async (id) => {
       const notif = notifications.value.find(n => n.id === id)
       if (notif) notif.is_read = true
       unreadCount.value = Math.max(0, unreadCount.value - 1)
+      broadcastUnread()
     }
   } catch (err) {
     console.error('Error:', err)
@@ -136,6 +154,7 @@ const markAllRead = async () => {
     if (response.ok) {
       notifications.value.forEach(n => n.is_read = true)
       unreadCount.value = 0
+      broadcastUnread()
     }
   } catch (err) {
     console.error('Error:', err)

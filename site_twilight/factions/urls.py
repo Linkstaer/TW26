@@ -88,6 +88,16 @@ urlpatterns = [
         views.create_faction_rank,
         name="create_faction_rank",
     ),
+    path(
+        "faction-dashboard/<int:faction_id>/ranks/<int:rank_id>/update/",
+        views.update_faction_rank,
+        name="update_faction_rank",
+    ),
+    path(
+        "faction-dashboard/<int:faction_id>/ranks/<int:rank_id>/delete/",
+        views.delete_faction_rank,
+        name="delete_faction_rank",
+    ),
     # Divisiones
     path(
         "faction-dashboard/<int:faction_id>/divisions/",

@@ -7,7 +7,7 @@ from django.conf import settings
 import requests
 from django.contrib.auth import login, logout
 from django.http import HttpResponseForbidden
-from ..models import User
+from ..models import User, UsernameHistory
 
 def roblox_login(request):
     state = secrets.token_urlsafe(32)
@@ -61,6 +61,16 @@ def roblox_callback(request):
     if created:
         user.set_unusable_password()
         user.save()
+    elif user.roblox_username != roblox_username:
+        # Actualización automática de username si cambió en Roblox (spec §1.1),
+        # guardando el anterior en el historial para moderación.
+        UsernameHistory.objects.create(
+            user=user,
+            old_username=user.roblox_username,
+            new_username=roblox_username,
+        )
+        user.roblox_username = roblox_username
+        user.save(update_fields=["roblox_username"])
 
     # Ensure Django knows the backend
     login(request, user)

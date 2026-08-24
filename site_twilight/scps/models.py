@@ -80,7 +80,7 @@ class SCP(models.Model):
         return level_map.get(level, "")
 
     def can_user_edit(self, user) -> tuple[bool, str]:
-        """Verifica si el usuario puede editar este SCP"""
+        """Verifica si el usuario puede editar este SCP (spec §3.1/§3.3)"""
         if not user.is_authenticated:
             return False, "Debes iniciar sesión"
 
@@ -92,9 +92,13 @@ class SCP(models.Model):
         if not card:
             return False, "Sin tarjeta de acceso"
 
-        # O5 puede editar cualquier cosa
+        # RAISA / Beta-1 / Administrative Department / L6: cualquier documento
         if card.can_edit_any:
-            return True, "Acceso total O5/Admin"
+            return True, "Acceso total RAISA/Beta-1/AD"
+
+        # Consejo O5: redacta secciones según nivel de acceso
+        if card.can_edit_o5:
+            return True, "Acceso Consejo O5 (por nivel)"
 
         # Actor SCP puede editar solo su archivo
         if self.actor_character:
@@ -103,25 +107,74 @@ class SCP(models.Model):
 
         return False, "Sin permisos para editar"
 
+    def can_user_edit_section(self, user, section: str) -> tuple[bool, str]:
+        """
+        Verifica si el usuario puede editar una sección específica (L1..L6).
+        O5 solo redacta secciones hasta su nivel de acceso (spec §3.3).
+        """
+        can_edit, reason = self.can_user_edit(user)
+        if not can_edit:
+            return False, reason
+
+        if user.is_superuser:
+            return True, reason
+
+        card = user.get_highest_access_card()
+        if card and card.can_edit_o5 and not card.can_edit_any:
+            from factions.models import LEVEL_ORDER
+
+            if LEVEL_ORDER.get(section.upper(), 99) > card.level_number:
+                return False, "El Consejo O5 solo redacta secciones de su nivel"
+
+        return True, reason
+
+    def can_user_add_appendix(self, user) -> tuple[bool, str]:
+        """
+        Scientific Department puede agregar apéndices/comentarios
+        sin modificar la base (spec §3.3).
+        """
+        can_edit, reason = self.can_user_edit(user)
+        if can_edit:
+            return True, reason
+
+        card = user.get_highest_access_card() if user.is_authenticated else None
+        if card and card.can_edit_scd:
+            return True, "Scientific Department: apéndices"
+
+        return False, "Sin permisos para agregar apéndices"
+
     def to_dict(self, user=None):
         """Serializa el SCP según el nivel de acceso del usuario"""
+        accessible_levels = (
+            user.get_accessible_levels() if user and user.is_authenticated else ["L1"]
+        )
+
         data = {
             "id": self.id,
             "scp_id": self.scp_id,
             "title": self.title,
             "object_class": self.object_class,
-            "appendices": self.appendices,
+            # Apéndices filtrados por nivel de acceso (spec §3.2)
+            "appendices": [
+                a
+                for a in (self.appendices or [])
+                if a.get("level", "L1") in accessible_levels
+            ],
             "is_active": self.is_active,
+            "accessible_levels": accessible_levels,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
-        if user and user.is_authenticated:
-            accessible_levels = user.get_accessible_levels()
+        # Agregar contenido por nivel
+        for level in accessible_levels:
+            data[f"content_{level.lower()}"] = self.get_content_for_level(level)
 
-            # Agregar contenido por nivel
-            for level in accessible_levels:
-                data[f"content_{level.lower()}"] = self.get_content_for_level(level)
+        if user and user.is_authenticated:
+            can_edit, _ = self.can_user_edit(user)
+            can_appendix, _ = self.can_user_add_appendix(user)
+            data["can_edit"] = can_edit
+            data["can_add_appendix"] = can_appendix
 
         return data
 

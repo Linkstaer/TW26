@@ -349,7 +349,7 @@
         </div>
 
         <!-- Tarjeta 7: [REDACTED] -->
-        <div class="moderation-card redacted" :class="{ 'active': activeCard === 5 }" @click="showAccessDenied(5)">
+        <div class="moderation-card redacted" :class="{ 'active': activeCard === 9 }" @click="showAccessDenied(9)">
           <div class="card-header redacted">
             <div class="card-icon redacted">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -384,7 +384,7 @@
         </div>
 
         <!-- Tarjeta 6: [REDACTED] -->
-        <div class="moderation-card redacted" :class="{ 'active': activeCard === 6 }" @click="showAccessDenied(6)">
+        <div class="moderation-card redacted" :class="{ 'active': activeCard === 10 }" @click="showAccessDenied(10)">
           <div class="card-header redacted">
             <div class="card-icon redacted">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

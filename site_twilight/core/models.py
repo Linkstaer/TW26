@@ -34,3 +34,35 @@ class SSUToggleLog(models.Model):
     def __str__(self):
         user_name = self.user.roblox_username if self.user else 'SYSTEM'
         return f"{user_name} - {self.action} at {self.created_at}"
+
+class AIQueryLog(models.Model):
+    """
+    Log de consultas a la AI de Consulta (spec §7).
+    "Todas las consultas sensibles quedan logueadas."
+    """
+
+    class Mode(models.TextChoices):
+        RP = "rp", "In-RP"
+        TECHNICAL = "technical", "Técnico"
+
+    user = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="ai_queries",
+    )
+    mode = models.CharField(max_length=16, choices=Mode.choices, default=Mode.RP)
+    access_level = models.CharField(max_length=4, default="L1")
+    query = models.TextField()
+    response = models.TextField(blank=True)
+    used_llm = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Consulta AI"
+        verbose_name_plural = "Consultas AI"
+
+    def __str__(self):
+        user_name = self.user.roblox_username if self.user else "?"
+        return f"{user_name} [{self.access_level}] {self.query[:40]}"

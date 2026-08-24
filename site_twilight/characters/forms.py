@@ -6,7 +6,8 @@ from .models import Character
 class CharacterForm(forms.ModelForm):
     class Meta:
         model = Character
-        exclude = ("owner",)
+        # status lo gestiona moderación/admin, no el formulario del usuario
+        exclude = ("owner", "status")
         widgets = {
             "birth_date": forms.DateInput(attrs={"type": "date"}),
             "lore": forms.Textarea(attrs={"rows": 4}),

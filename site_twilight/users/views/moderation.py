@@ -521,6 +521,15 @@ def api_get_user_moderation_info(request, roblox_id):
                 "is_banned": user.is_banned,
                 "ban_reason": user.ban_reason,
                 "banned_until": user.banned_until.isoformat() if user.banned_until else None,
+                # Historial de usernames (spec §1.1, moderación)
+                "username_history": [
+                    {
+                        "old_username": h.old_username,
+                        "new_username": h.new_username,
+                        "changed_at": h.changed_at.isoformat(),
+                    }
+                    for h in user.username_history.all()[:20]
+                ],
             },
             "active_warns": [
                 {

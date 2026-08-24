@@ -7,8 +7,18 @@ User = settings.AUTH_USER_MODEL
 
 
 class Character(models.Model):
+    # Estado del personaje (spec §4.1)
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Activo"
+        CLASSIFIED = "classified", "Clasificado"
+        DELETED = "deleted", "Eliminado"
+
     # === Datos base ===
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="characters")
+
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.ACTIVE
+    )
 
     first_name = models.CharField(max_length=64, validators=[MaxLengthValidator(64)])
     last_name = models.CharField(max_length=64, validators=[MaxLengthValidator(64)])
@@ -16,7 +26,11 @@ class Character(models.Model):
     birth_date = models.DateField()
 
     codename = models.CharField(max_length=32, validators=[MaxLengthValidator(32)])
-    faction = models.CharField(max_length=32, validators=[MaxLengthValidator(64)])
+    # Campo legacy de texto; la pertenencia real vive en CharacterFactionMembership.
+    # Opcional: un personaje puede estar sin facción (spec §1.3).
+    faction = models.CharField(
+        max_length=32, blank=True, default="", validators=[MaxLengthValidator(64)]
+    )
 
     lore = models.CharField(max_length=5000, blank=True, validators=[MaxLengthValidator(5000)])
 
@@ -165,6 +179,24 @@ class Character(models.Model):
         if cmds:
             return f"run {' & '.join(cmds)}"
         return ""
+
+    def get_access_level(self) -> str:
+        """
+        Nivel de la tarjeta asignada al personaje vía su membresía activa (spec §1.3).
+        Sin membresía o sin tarjeta => L1.
+        """
+        from factions.models import CharacterFactionMembership
+
+        membership = (
+            self.faction_memberships.filter(
+                status=CharacterFactionMembership.Status.ACTIVE
+            )
+            .select_related("access_card")
+            .first()
+        )
+        if membership and membership.access_card:
+            return membership.access_card.level
+        return "L1"
 
     def __str__(self):
         return f"{self.codename} ({self.owner})"

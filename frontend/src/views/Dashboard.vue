@@ -228,40 +228,172 @@
             </div>
           </div>
         </div>
-        <!-- Tarjetas 5-9: [REDACTED] -->
-        <div class="dashboard-card redacted" v-for="n in 5" :key="n" @click="showAccessDenied(n + 4)">
-          <div class="card-header redacted">
-            <div class="card-icon redacted">
+        <!-- Tarjeta 5: SCP Database -->
+        <div class="dashboard-card" @click="goToScps">
+          <div class="card-header">
+            <div class="card-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="4"></circle>
+                <line x1="12" y1="2" x2="12" y2="8"></line>
+                <line x1="12" y1="16" x2="12" y2="22"></line>
+                <line x1="2" y1="12" x2="8" y2="12"></line>
+                <line x1="16" y1="12" x2="22" y2="12"></line>
               </svg>
             </div>
-            <div class="card-title redacted-text">[REDACTED]</div>
-            <div class="card-status">
-              <span class="status-redacted">CLASSIFIED</span>
-            </div>
+            <div class="card-title">SCP DATABASE</div>
           </div>
-          <div class="card-content redacted">
-            <p class="card-description redacted-text">Access to this function requires Level 4 security clearance or higher.</p>
+          <div class="card-content">
+            <p class="card-description">Consulta los archivos SCP del sitio. El contenido visible depende de tu tarjeta de acceso.</p>
             <div class="card-meta">
-              <span class="meta-label">CLEARANCE:</span>
-              <span class="meta-value redacted">LEVEL 4+</span>
+              <span class="meta-label">ACCESS:</span>
+              <span class="meta-value authorized">BY CLEARANCE</span>
             </div>
           </div>
-          <div class="card-footer redacted">
-            <div class="clearance-warning">
-              <div class="warning-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="#aa2222" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="8" x2="12" y2="12"></line>
-                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-              </div>
-              <span class="warning-text">INSUFFICIENT CLEARANCE</span>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToScps">
+                <span class="button-text">ACCESS SYSTEM</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
             </div>
           </div>
         </div>
+
+        <!-- Tarjeta 6: Documentación -->
+        <div class="dashboard-card" @click="goToDocuments">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+            </div>
+            <div class="card-title">DOCUMENTACIÓN</div>
+          </div>
+          <div class="card-content">
+            <p class="card-description">Procedimientos, memos, reglamentos y briefings internos filtrados por nivel de acceso.</p>
+            <div class="card-meta">
+              <span class="meta-label">ACCESS:</span>
+              <span class="meta-value authorized">BY CLEARANCE</span>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToDocuments">
+                <span class="button-text">ACCESS SYSTEM</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 7: Anuncios -->
+        <div class="dashboard-card" @click="goToAnnouncements">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 11l18-5v12L3 14v-3z"></path>
+                <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"></path>
+              </svg>
+            </div>
+            <div class="card-title">ANUNCIOS</div>
+          </div>
+          <div class="card-content">
+            <p class="card-description">Feed de comunicados In-RP, Off-RP y eventos automáticos del sistema.</p>
+            <div class="card-meta">
+              <span class="meta-label">ACCESS:</span>
+              <span class="meta-value authorized">GRANTED</span>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToAnnouncements">
+                <span class="button-text">ACCESS SYSTEM</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 8: Terminal de Consulta -->
+        <div class="dashboard-card" @click="goToTerminal">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+            </div>
+            <div class="card-title">TERMINAL DE CONSULTA</div>
+          </div>
+          <div class="card-content">
+            <p class="card-description">Asistente institucional RAISA. Consulta SCPs, documentos y facciones según tu acreditación.</p>
+            <div class="card-meta">
+              <span class="meta-label">ACCESS:</span>
+              <span class="meta-value authorized">GRANTED</span>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToTerminal">
+                <span class="button-text">ACCESS SYSTEM</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 9: Sugerencias de Lore -->
+        <div class="dashboard-card" @click="goToLore">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+            </div>
+            <div class="card-title">SUGERENCIAS DE LORE</div>
+          </div>
+          <div class="card-content">
+            <p class="card-description">Programa exclusivo para Boosters: propone ideas de lore al equipo de roleplay.</p>
+            <div class="card-meta">
+              <span class="meta-label">ACCESS:</span>
+              <span class="meta-value authorized">BOOSTERS</span>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToLore">
+                <span class="button-text">ACCESS SYSTEM</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- Información del Sistema -->
@@ -376,6 +508,26 @@ const goToApeals = () => {
 
 const goToFactions = () => {
   router.push('/dashboard/factions')
+}
+
+const goToScps = () => {
+  router.push('/dashboard/scps')
+}
+
+const goToDocuments = () => {
+  router.push('/dashboard/documents')
+}
+
+const goToAnnouncements = () => {
+  router.push('/dashboard/announcements')
+}
+
+const goToTerminal = () => {
+  router.push('/dashboard/terminal')
+}
+
+const goToLore = () => {
+  router.push('/dashboard/lore-suggestions')
 }
 
 const updateTime = () => {

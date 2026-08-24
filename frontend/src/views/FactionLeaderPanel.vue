@@ -336,8 +336,8 @@
           </div>
           <div class="form-group">
             <label>Nivel jerárquico:</label>
-            <input type="number" v-model="newRank.level" min="1" max="99" />
-            <small class="form-help">1 = más bajo, 100 = más alto</small>
+            <input type="number" v-model.number="newRank.level" min="1" max="100" />
+            <small class="form-help">1-25 Bajo Rango · 26-50 Rango Medio · 51-75 Alto Rango · 76-100 Alto Mando</small>
           </div>
           <div class="form-group">
             <label class="checkbox-label">
@@ -364,6 +364,49 @@
         <div class="modal-footer">
           <button class="cancel-btn" @click="showCreateRankModal = false">CANCELAR</button>
           <button class="save-btn" @click="createRank">CREAR</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Rank Modal -->
+    <div v-if="editingRank" class="modal-overlay" @click="editingRank = null">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h2>EDITAR RANGO</h2>
+          <button class="close-btn" @click="editingRank = null">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Nombre del rango:</label>
+            <input v-model="editingRank.name" />
+          </div>
+          <div class="form-group">
+            <label>Nivel jerárquico:</label>
+            <input type="number" v-model.number="editingRank.level" min="1" max="100" />
+            <small class="form-help">1-25 Bajo Rango · 26-50 Rango Medio · 51-75 Alto Rango · 76-100 Alto Mando</small>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="editingRank.can_manage_members" />
+              Puede gestionar miembros
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="editingRank.can_review_applications" />
+              Puede revisar solicitudes
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="editingRank.can_assign_ranks" />
+              Puede asignar rangos
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="cancel-btn" @click="editingRank = null">CANCELAR</button>
+          <button class="save-btn" @click="saveRankEdit">GUARDAR</button>
         </div>
       </div>
     </div>
@@ -450,6 +493,7 @@ const availableCharacters = ref([])
 
 const memberSearch = ref('')
 const showCreateRankModal = ref(false)
+const editingRank = ref(null)
 
 const inviteSearch = ref('')
 const inviteResults = ref([])
@@ -617,9 +661,13 @@ const acceptApplication = async (appId) => {
     if (response.ok) {
       await loadFactionData()
       alert('Solicitud aceptada')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      alert(data.error || `No se pudo aceptar la solicitud (error ${response.status})`)
     }
   } catch (err) {
     console.error('Error:', err)
+    alert('Error de conexión al aceptar la solicitud')
   }
 }
 
@@ -632,15 +680,19 @@ const rejectApplication = async (appId) => {
     })
     if (response.ok) {
       await loadFactionData()
+    } else {
+      const data = await response.json().catch(() => ({}))
+      alert(data.error || `No se pudo rechazar la solicitud (error ${response.status})`)
     }
   } catch (err) {
     console.error('Error:', err)
+    alert('Error de conexión al rechazar la solicitud')
   }
 }
 
 const createRank = async () => {
   try {
-    const response = await fetch(`/api/factions/${selectedFactionId.value}/ranks/create/`, {
+    const response = await fetch(`/api/faction-dashboard/${selectedFactionId.value}/ranks/create/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newRank.value)
@@ -657,12 +709,51 @@ const createRank = async () => {
 }
 
 const editRank = (rank) => {
-  alert('Edición de rangos en desarrollo')
+  editingRank.value = {
+    id: rank.id,
+    name: rank.name,
+    level: rank.level,
+    can_manage_members: rank.can_manage_members,
+    can_review_applications: rank.can_review_applications,
+    can_assign_ranks: rank.can_assign_ranks
+  }
+}
+
+const saveRankEdit = async () => {
+  try {
+    const response = await fetch(`/api/faction-dashboard/${selectedFactionId.value}/ranks/${editingRank.value.id}/update/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editingRank.value)
+    })
+    const data = await response.json()
+    if (response.ok) {
+      editingRank.value = null
+      await loadFactionData()
+    } else {
+      alert(data.error || 'Error al actualizar el rango')
+    }
+  } catch (err) {
+    console.error('Error:', err)
+  }
 }
 
 const deleteRank = async (rank) => {
   if (!confirm(`¿Eliminar rango ${rank.name}?`)) return
-  alert('Eliminación de rangos en desarrollo')
+  try {
+    const response = await fetch(`/api/faction-dashboard/${selectedFactionId.value}/ranks/${rank.id}/delete/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    const data = await response.json()
+    if (response.ok) {
+      await loadFactionData()
+    } else {
+      alert(data.error || 'Error al eliminar el rango')
+    }
+  } catch (err) {
+    console.error('Error:', err)
+  }
 }
 
 let searchTimeout = null
@@ -806,6 +897,7 @@ onMounted(async () => {
   height: 100%;
   background: linear-gradient(135deg, #0a0a0a 0%, #121212 50%, #0a0a0a 100%);
   z-index: 0;
+  pointer-events: none; /* decorativo: nunca debe interceptar clics */
 }
 
 .grid-overlay {
@@ -847,6 +939,8 @@ onMounted(async () => {
 }
 
 .panel-nav {
+  position: relative; /* sin esto, .site-background (fixed, z-index 0) lo tapa */
+  z-index: 2;
   display: flex;
   gap: 5px;
   padding: 0 1.5rem;
