@@ -4,3 +4,8 @@
 **/__pycache__/
 *.sqlite3
 *.pyc
+
+# Generado por collectstatic en cada build
+site_twilight/staticfiles/
+.claude/
+!.env.example
