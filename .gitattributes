@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Scripts de arranque del contenedor: siempre LF, con CRLF el shell de
+# Linux falla con "bad interpreter" o $: command not found
+*.sh text eol=lf
+Dockerfile text eol=lf
