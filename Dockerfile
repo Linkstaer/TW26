@@ -8,6 +8,12 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
+# Sin esto, la salida de Python queda bufferada y los logs de arranque
+# no aparecen en Railway hasta que el proceso termina.
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8080
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -30,6 +36,8 @@ WORKDIR /app/site_twilight
 # Collect static files (no requiere base de datos)
 RUN SECRET_KEY=build-only python manage.py collectstatic --noinput
 
-EXPOSE $PORT
-# migrate + ensure_admin corren en runtime: en build no hay base de datos
-CMD python manage.py migrate --noinput && (python manage.py ensure_admin || echo '[warn] ensure_admin fallo, continuando') && echo "[boot] iniciando gunicorn en 0.0.0.0:${PORT:-8000}" && gunicorn site_twilight.wsgi:application --bind 0.0.0.0:${PORT:-8000} --access-logfile - --error-logfile - --log-level info
+EXPOSE 8080
+
+# El arranque vive en start.sh (ver logs de cada fase). railway.json ya no
+# define startCommand: este CMD es la unica fuente de verdad.
+CMD ["sh", "/app/start.sh"]
