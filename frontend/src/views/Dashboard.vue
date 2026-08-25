@@ -409,7 +409,7 @@
           </div>
           <div class="info-item">
             <span class="info-label">CLEARANCE LEVEL:</span>
-            <span class="info-value">3</span>
+            <span class="info-value">{{ currentUser?.access_level_number ?? '?' }}</span>
           </div>
           <div class="info-item">
             <span class="info-label">ACCESS TYPE:</span>
@@ -448,7 +448,7 @@
           <div class="clearance-info">
             <div class="clearance-item">
               <span class="clearance-label">CURRENT CLEARANCE:</span>
-              <span class="clearance-value">LEVEL 3</span>
+              <span class="clearance-value">LEVEL {{ currentUser?.access_level_number ?? '?' }}</span>
             </div>
             <div class="clearance-item">
               <span class="clearance-label">REQUIRED CLEARANCE:</span>

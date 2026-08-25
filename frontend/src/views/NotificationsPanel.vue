@@ -76,10 +76,21 @@
         </div>
         <div class="modal-body">
           <p>{{ respondingInvitation.message }}</p>
+          <div v-if="myCharacters.length" class="character-picker">
+            <label>Personaje con el que te unís:</label>
+            <select v-model="selectedCharacterId">
+              <option v-for="c in myCharacters" :key="c.id" :value="String(c.id)">
+                {{ c.codename }}
+              </option>
+            </select>
+          </div>
+          <p v-else class="no-characters">
+            Necesitás al menos un personaje para unirte a una facción.
+          </p>
         </div>
         <div class="modal-footer">
-          <button class="decline-btn" @click="respondInvitation(respondingInvitation.id, 'decline')">RECHAZAR</button>
-          <button class="accept-btn" @click="respondInvitation(respondingInvitation.id, 'accept')">ACEPTAR</button>
+          <button class="decline-btn" @click="respondInvitation(respondingInvitation.invitation_id, 'decline')">RECHAZAR</button>
+          <button class="accept-btn" :disabled="!myCharacters.length" @click="respondInvitation(respondingInvitation.invitation_id, 'accept')">ACEPTAR</button>
         </div>
       </div>
     </div>
@@ -107,6 +118,23 @@ const broadcastUnread = () => {
   )
 }
 const respondingInvitation = ref(null)
+const myCharacters = ref([])
+const selectedCharacterId = ref('')
+
+const fetchMyCharacters = async () => {
+  try {
+    const response = await fetch('/api/characters/mine/')
+    if (response.ok) {
+      const data = await response.json()
+      myCharacters.value = data.results || []
+      if (myCharacters.value.length && !selectedCharacterId.value) {
+        selectedCharacterId.value = String(myCharacters.value[0].id)
+      }
+    }
+  } catch (err) {
+    console.error('Error:', err)
+  }
+}
 
 const fetchNotifications = async () => {
   try {
@@ -179,7 +207,7 @@ const respondInvitation = async (invitationId, action) => {
     const response = await fetch(`/api/invitations/${invitationId}/respond/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action })
+      body: JSON.stringify({ action, character_id: selectedCharacterId.value })
     })
     if (response.ok) {
       const data = await response.json()
@@ -213,6 +241,7 @@ const formatDate = (dateStr) => {
 onMounted(() => {
   fetchNotifications()
   fetchUnreadCount()
+  fetchMyCharacters()
 })
 </script>
 
@@ -377,6 +406,32 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+.character-picker {
+  margin-top: 15px;
+}
+
+.character-picker label {
+  display: block;
+  margin-bottom: 5px;
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.character-picker select {
+  width: 100%;
+  padding: 10px;
+  background: rgba(30, 30, 30, 0.8);
+  border: 1px solid #444;
+  color: #fff;
+  box-sizing: border-box;
+}
+
+.no-characters {
+  margin-top: 15px;
+  color: #aa6666;
+  font-size: 0.85rem;
 }
 
 .respond-btn {

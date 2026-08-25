@@ -96,7 +96,7 @@
         </div>
         <div class="info-item">
           <span class="info-label">CLEARANCE:</span>
-          <span class="info-value">{{ currentUser?.is_authenticated ? 'LEVEL 2' : 'GUEST' }}</span>
+          <span class="info-value">{{ currentUser?.is_authenticated ? 'LEVEL ' + (currentUser.access_level_number ?? '?') : 'GUEST' }}</span>
         </div>
         <div class="info-item">
           <span class="info-label">SYSTEM:</span>
@@ -238,7 +238,13 @@
               <div class="card-body">
                 <div class="name-row">
                   <div class="name-faction">
-                    <h4 class="character-name">{{ character.first_name }} {{ character.last_name }}</h4>
+                    <h4 class="character-name">
+                      <Redacted
+                        v-if="isRedacted(character, 'first_name')"
+                        :level="character.redaction_required_level"
+                      />
+                      <template v-else>{{ character.first_name }} {{ character.last_name }}</template>
+                    </h4>
                     <span v-if="character.faction_data" class="character-faction">
                       {{ character.faction_data.name }}
                       <span v-if="character.faction_data.rank" class="rank-info">
@@ -253,7 +259,13 @@
                   <div class="right-info">
                     <div class="info-item">
                       <span class="info-label">EDAD</span>
-                      <span class="info-value">{{ character.age || 'N/A' }} años</span>
+                      <span class="info-value">
+                        <Redacted
+                          v-if="isRedacted(character, 'age')"
+                          :level="character.redaction_required_level"
+                        />
+                        <template v-else>{{ character.age || 'N/A' }} años</template>
+                      </span>
                     </div>
                     <div class="info-item">
                       <span class="info-label">REGISTRADO</span>
@@ -631,6 +643,11 @@
                 <div class="form-hint">
                   Soporta formato Markdown: **negrita**, *cursiva*, # títulos, - listas, [enlaces](url), > citas
                 </div>
+                <div class="form-hint redaction-hint">
+                  <strong>Expurgar:</strong> encerrá entre <code>[[ ]]</code> lo que quieras tapar.
+                  <code>[[marzo de 2019]]</code> se ve como ██████████ para el resto del personal.
+                  Moderación y clearance L6 lo leen igual.
+                </div>
               </div>
             </div>
             
@@ -689,15 +706,33 @@
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Nombre:</span>
-                  <span class="detail-value long-text">{{ selectedCharacter.first_name }} {{ selectedCharacter.last_name }}</span>
+                  <span class="detail-value long-text">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'first_name')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ selectedCharacter.first_name }} {{ selectedCharacter.last_name }}</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">País:</span>
-                  <span class="detail-value">{{ selectedCharacter.country }}</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'country')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ selectedCharacter.country }}</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Edad:</span>
-                  <span class="detail-value">{{ selectedCharacter.age || 'N/A' }} años</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'age')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ selectedCharacter.age || 'N/A' }} años</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Facción:</span>
@@ -732,10 +767,23 @@
               </div>
             </div>
             
-            <div class="detail-section" v-if="selectedCharacter.lore">
+            <div class="detail-section" v-if="selectedCharacter.lore || isRedacted(selectedCharacter, 'lore')">
               <h3 class="section-title">LORE Y BIOGRAFÍA</h3>
               <div class="lore-container">
-                <div class="lore-content" v-html="renderMarkdown(selectedCharacter.lore)"></div>
+                <Redacted
+                  v-if="isRedacted(selectedCharacter, 'lore')"
+                  block
+                  :length="180"
+                  :level="selectedCharacter.redaction_required_level"
+                />
+                <template v-else>
+                  <p v-if="selectedCharacter.lore_censored_by_owner" class="censorship-note">
+                    {{ selectedCharacter.lore_censorship_revealed
+                        ? 'Contiene tramos expurgados por su titular. Los estás viendo completos.'
+                        : 'Tramos de este expediente fueron expurgados por su titular.' }}
+                  </p>
+                  <div class="lore-content" v-html="renderMarkdown(selectedCharacter.lore)"></div>
+                </template>
               </div>
             </div>
             
@@ -951,6 +999,7 @@ import { useRouter } from 'vue-router'
 import Fuse from 'fuse.js'
 import No_Mobile from '@/components/No_Mobile.vue'
 import Login_Required from '@/components/Login_Required.vue'
+import Redacted from '@/components/Redacted.vue'
 
 const router = useRouter()
 
@@ -983,6 +1032,9 @@ const fuseMyCharacters = ref(null)
 const searchResults = ref([])
 const isFuzzySearch = ref(false)
 const showSearchSuggestions = ref(false)
+
+// Campos que el viewer no puede leer: llegan vacios pero anunciados por la API.
+const isRedacted = (character, field) => !!character?.redacted?.includes(field)
 
 const fieldTranslations = {
   // Información de identidad
@@ -3558,6 +3610,27 @@ onMounted(() => {
   display: inline-block;
   font-family: 'Consolas', monospace;
   letter-spacing: 0.3px;
+}
+
+.redaction-hint {
+  margin-top: 6px;
+  color: #8a8a8a;
+}
+
+.redaction-hint code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 4px;
+  font-family: 'Consolas', monospace;
+}
+
+.censorship-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: rgba(170, 34, 34, 0.08);
+  border-left: 2px solid rgba(170, 34, 34, 0.5);
+  color: #999;
+  font-size: 0.75rem;
+  font-family: 'Consolas', monospace;
 }
 
 .lore-container {

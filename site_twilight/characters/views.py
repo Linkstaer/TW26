@@ -1,4 +1,5 @@
 import json
+import re
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
@@ -23,6 +24,42 @@ def _calculate_age(birth_date):
 
 
 LEVEL_ORDER = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
+
+
+# El dueño marca lo que quiere tapar de su lore encerrándolo en [[...]].
+_CENSOR_RE = re.compile(r"\[\[(.+?)\]\]", re.DOTALL)
+_REDACTION_CHAR = "█"
+
+
+def _apply_owner_censorship(text, mode):
+    """
+    Aplica la censura que el dueño escribió en su lore.
+
+    mode:
+      "raw"    -> dueño: texto tal cual, con las marcas a la vista para editarlas.
+                  Si se las devolviéramos limpias, al guardar perdería la censura.
+      "reveal" -> moderación / L6: lee el contenido, sin los corchetes.
+      "block"  -> el resto: bloques █ del largo de lo tapado.
+
+    Devuelve (texto, hubo_censura).
+    """
+    if not text:
+        return text, False
+
+    if mode == "raw":
+        return text, bool(_CENSOR_RE.search(text))
+
+    found = False
+
+    def repl(match):
+        nonlocal found
+        found = True
+        inner = match.group(1)
+        if mode == "reveal":
+            return inner
+        return _REDACTION_CHAR * max(3, min(len(inner), 60))
+
+    return _CENSOR_RE.sub(repl, text), found
 
 
 def _viewer_access(user):
@@ -92,10 +129,23 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
     faction_name = None
     rank_name = None
     if membership:
-        faction_name = membership.faction.get_visible_name(
-            viewer if viewer.is_authenticated else None
-        )
-        rank_name = membership.rank.name if membership.rank else None
+        faction = membership.faction
+        # El dueño conoce la facción de su propio personaje: mostrarle la
+        # fachada ahí no oculta nada y contradice a /characters/mine/.
+        if is_owner:
+            faction_name = faction.display_name
+        else:
+            faction_name = faction.get_visible_name(
+                viewer if viewer.is_authenticated else None
+            )
+        # Si al viewer le toca la fachada, el rango la delata: "O5-9 a O5-13"
+        # identifica al Consejo O5 aunque la facción se muestre como
+        # "Site Direction". La división filtra por el mismo lado.
+        shows_facade = faction.is_classified and faction_name != faction.display_name
+        if shows_facade:
+            division = None
+        else:
+            rank_name = membership.rank.name if membership.rank else None
 
     data = {
         "id": c.id,
@@ -114,7 +164,22 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
         "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
+    # Redacción en vez de ocultamiento: los campos que el viewer no puede leer
+    # viajan vacíos pero anunciados en "redacted", para que la UI muestre
+    # [DATOS EXPURGADOS] en vez de un hueco. Lo que sí se sigue ocultando por
+    # completo es la existencia del personaje (los return None de más arriba).
+    redacted = []
+
     if can_see_full:
+        # La censura del dueño no sirve para esconderse de moderación ni de L6.
+        if is_owner:
+            censor_mode = "raw"
+        elif is_moderator or access["full_access"]:
+            censor_mode = "reveal"
+        else:
+            censor_mode = "block"
+        lore, has_censorship = _apply_owner_censorship(c.lore, censor_mode)
+
         data.update(
             {
                 "first_name": c.first_name,
@@ -124,18 +189,24 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
                 if c.birth_date
                 else None,
                 "age": _calculate_age(c.birth_date) if c.birth_date else None,
-                "lore": c.lore,
+                "lore": lore,
+                "lore_censored_by_owner": has_censorship,
+                "lore_censorship_revealed": has_censorship
+                and censor_mode in ("raw", "reveal"),
             }
         )
     else:
+        redacted += ["first_name", "last_name", "country", "birth_date", "age", "lore"]
         data.update(
             {
-                "first_name": "[CLASIFICADO]",
-                "last_name": "",
+                "first_name": None,
+                "last_name": None,
                 "country": None,
                 "birth_date": None,
                 "age": None,
                 "lore": None,
+                "lore_censored_by_owner": False,
+                "lore_censorship_revealed": False,
             }
         )
 
@@ -162,6 +233,15 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
                 "morph_command": c.morph_command(),
             }
         )
+    else:
+        redacted.append("morph")
+
+    if data.get("access_level") is None:
+        redacted.append("access_level")
+
+    data["redacted"] = redacted
+    # Nivel que haría falta para leer lo tapado.
+    data["redaction_required_level"] = c.get_access_level() if redacted else None
 
     return data
 
@@ -217,6 +297,8 @@ def character_list_all(request):
 @login_required
 @require_http_methods(["GET"])
 def character_list_user(request):
+    from factions.models import CharacterFactionMembership, FactionDivision
+
     search_query = request.GET.get("search", "")
 
     characters = Character.objects.filter(owner=request.user).order_by("codename")
@@ -227,6 +309,33 @@ def character_list_user(request):
             | Q(first_name__icontains=search_query)
             | Q(last_name__icontains=search_query)
         )
+
+    # Character.faction es un campo legacy que nadie llena: la pertenencia real
+    # vive en CharacterFactionMembership. Sin esto "Mis agentes" muestra la
+    # facción vacía. Al ser el dueño el que consulta, no hay fachada que aplicar.
+    membership_by_char = {
+        m.character_id: m
+        for m in CharacterFactionMembership.objects.filter(
+            character__owner=request.user,
+            status=CharacterFactionMembership.Status.ACTIVE,
+        ).select_related("faction", "rank")
+    }
+    division_by_char = {}
+    for dm in FactionDivision.members.through.objects.filter(
+        character_id__in=[c.id for c in characters]
+    ):
+        division = FactionDivision.objects.filter(id=dm.factiondivision_id).first()
+        if division:
+            division_by_char[dm.character_id] = division.name
+
+    def _faction_data(c):
+        m = membership_by_char.get(c.id)
+        if not m:
+            return None
+        return {
+            "name": m.faction.display_name,
+            "rank": m.rank.name if m.rank else None,
+        }
 
     return JsonResponse(
         {
@@ -241,7 +350,11 @@ def character_list_user(request):
                     else None,
                     "age": _calculate_age(c.birth_date) if c.birth_date else None,
                     "codename": c.codename,
-                    "faction": c.faction,
+                    "faction": (_faction_data(c) or {}).get("name") or c.faction,
+                    "faction_data": _faction_data(c),
+                    "division": division_by_char.get(c.id),
+                    "owner_id": c.owner_id,
+                    "owner_username": c.owner.roblox_username,
                     "lore": c.lore,
                     "morph": c.morph,
                     "hat": c.hat,

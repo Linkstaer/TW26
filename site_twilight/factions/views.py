@@ -2,8 +2,10 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 import json
 from .models import (
+    LEVEL_ORDER,
     Faction,
     FactionRank,
     CharacterFactionMembership,
@@ -1074,6 +1076,7 @@ def manage_member(request, faction_id, member_id):
 def access_cards_list(request):
     """Lista de tarjetas de acceso"""
     cards = AccessCard.objects.all()
+    max_level = _max_assignable_card_level(request.user)
 
     cards_data = []
     for card in cards:
@@ -1086,6 +1089,9 @@ def access_cards_list(request):
                 "level": card.level,
                 "card_type": card.card_type,
                 "display_name": card.display_name,
+                # Si quien pregunta puede otorgar esta tarjeta (ver
+                # _max_assignable_card_level). El backend revalida igual.
+                "assignable": card.level_number <= max_level,
             }
         )
 
@@ -1334,10 +1340,12 @@ def respond_invitation(request, invitation_id):
     if request.method != "POST":
         return JsonResponse({"error": "Método no permitido"}, status=405)
 
+    # Las invitaciones nuevas se emiten al usuario y sin personaje (ver
+    # invite_user_to_faction); `character` solo sobrevive en las viejas.
     try:
         invitation = FactionInvitation.objects.get(
+            Q(user=request.user) | Q(character__owner=request.user),
             id=invitation_id,
-            character__owner=request.user,
             status=FactionInvitation.Status.PENDING,
         )
     except FactionInvitation.DoesNotExist:
@@ -1350,15 +1358,31 @@ def respond_invitation(request, invitation_id):
         return JsonResponse({"error": "Datos inválidos"}, status=400)
 
     if action == "accept":
+        from characters.models import Character
+
+        # La invitación no trae personaje: el usuario elige cuál se une.
+        character = invitation.character
+        if character is None:
+            character_id = data.get("character_id")
+            if not character_id:
+                return JsonResponse(
+                    {"error": "Elegí con qué personaje unirte"}, status=400
+                )
+            try:
+                character = Character.objects.get(id=character_id, owner=request.user)
+            except Character.DoesNotExist:
+                return JsonResponse({"error": "Personaje no encontrado"}, status=404)
+
         # Verificar si ya tiene membresía activa
         if CharacterFactionMembership.objects.filter(
-            character=invitation.character,
+            character=character,
             status=CharacterFactionMembership.Status.ACTIVE,
         ).exists():
             return JsonResponse(
                 {"error": "El personaje ya tiene una facción activa"}, status=400
             )
 
+        invitation.character = character
         invitation.accept()
 
         # Notificar al líder
@@ -1366,7 +1390,7 @@ def respond_invitation(request, invitation_id):
             user=invitation.invited_by,
             notification_type=Notification.NotificationType.SYSTEM,
             title="Invitación aceptada",
-            message=f"{invitation.character.codename} ha aceptado la invitación a {invitation.faction.display_name}",
+            message=f"{character.codename} ha aceptado la invitación a {invitation.faction.display_name}",
             related_faction=invitation.faction,
         )
 
@@ -1399,6 +1423,9 @@ def notifications_list(request):
                 "is_read": notif.is_read,
                 # Para poder navegar al panel correspondiente desde la notificación
                 "faction_id": notif.related_faction_id,
+                # El id de la notificación NO es el de la invitación: el modal
+                # de respuesta necesita este.
+                "invitation_id": notif.related_invitation_id,
                 "created_at": notif.created_at.isoformat()
                 if notif.created_at
                 else None,
@@ -1451,6 +1478,20 @@ def mark_all_notifications_read(request):
     return JsonResponse({"success": True})
 
 
+def _max_assignable_card_level(user) -> int:
+    """
+    Nivel máximo de tarjeta que un usuario puede asignar a un rango.
+    Un líder no puede otorgar más acceso del que él mismo tiene; los admins
+    no tienen tope. Devuelve 0 si el usuario no tiene tarjeta alguna.
+    """
+    if getattr(user, "is_superuser", False):
+        return LEVEL_ORDER["L6"]
+    if not getattr(user, "is_authenticated", False):
+        return 0
+    card = user.get_highest_access_card()
+    return card.level_number if card else 0
+
+
 # === ADMIN: Crear/Editar Rangos de Facción ===
 @login_required
 @csrf_exempt
@@ -1472,7 +1513,7 @@ def create_faction_rank(request, faction_id):
     try:
         data = json.loads(request.body)
         name = data.get("name")
-        access_card = data.get("access_card")
+        access_card_id = data.get("access_card_id")
         can_manage_members = data.get("can_manage_members", False)
         can_review_applications = data.get("can_review_applications", False)
         can_assign_ranks = data.get("can_assign_ranks", False)
@@ -1485,13 +1526,20 @@ def create_faction_rank(request, faction_id):
     if FactionRank.objects.filter(faction=faction, name=name).exists():
         return JsonResponse({"error": "Ya existe un rango con ese nombre"}, status=400)
 
-    # Obtener la tarjeta de acceso si se especificó
+    # Tarjeta: mismo tope que al editar (ver update_faction_rank). Se
+    # identifica por id, no por nivel: varias tarjetas comparten nivel
+    # (L6 es O5, RAISA, Administración y Beta-1 a la vez).
     access_card_obj = None
-    if access_card:
+    if access_card_id:
         try:
-            access_card_obj = AccessCard.objects.get(level=access_card)
+            access_card_obj = AccessCard.objects.get(id=access_card_id)
         except AccessCard.DoesNotExist:
-            pass
+            return JsonResponse({"error": "Tarjeta no encontrada"}, status=404)
+        if access_card_obj.level_number > _max_assignable_card_level(request.user):
+            return JsonResponse(
+                {"error": "No podés asignar una tarjeta superior a la tuya"},
+                status=403,
+            )
 
     # Nivel jerárquico: define el bracket (1-25 bajo, 26-50 medio,
     # 51-75 alto, 76-100 alto mando). Se respeta el enviado; si no
@@ -1501,8 +1549,7 @@ def create_faction_rank(request, faction_id):
     except (TypeError, ValueError):
         level = 0
     if not 1 <= level <= 100:
-        level_map = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
-        level = level_map.get(access_card, 1)
+        level = access_card_obj.level_number if access_card_obj else 1
 
     # Crear rango
     rank = FactionRank.objects.create(
@@ -1563,14 +1610,32 @@ def update_faction_rank(request, faction_id, rank_id):
         if flag in data:
             setattr(rank, flag, bool(data[flag]))
 
-    # Tarjeta: solo admins (los líderes no gestionan tarjetas)
-    if "access_card_id" in data and request.user.is_superuser:
+    # Tarjeta: un líder puede elegirla, pero nunca por encima de la suya
+    # (el bracket 1-100 no determina el nivel de acceso: un rango medio puede
+    # llevar L2, L4 o ninguna). Los admins no tienen tope.
+    if "access_card_id" in data:
+        max_level = _max_assignable_card_level(request.user)
+
+        # Tampoco puede tocar un rango cuya tarjeta actual lo supera: si no
+        # puede otorgar ese nivel, tampoco puede quitarlo.
+        if rank.access_card and rank.access_card.level_number > max_level:
+            return JsonResponse(
+                {"error": "No podés modificar la tarjeta de un rango superior al tuyo"},
+                status=403,
+            )
+
         card_id = data.get("access_card_id")
         if card_id:
             try:
-                rank.access_card = AccessCard.objects.get(id=card_id)
+                card = AccessCard.objects.get(id=card_id)
             except AccessCard.DoesNotExist:
                 return JsonResponse({"error": "Tarjeta no encontrada"}, status=404)
+            if card.level_number > max_level:
+                return JsonResponse(
+                    {"error": "No podés asignar una tarjeta superior a la tuya"},
+                    status=403,
+                )
+            rank.access_card = card
         else:
             rank.access_card = None
 

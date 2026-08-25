@@ -72,7 +72,7 @@
         </div>
         <div class="info-item">
           <span class="info-label">CLEARANCE:</span>
-          <span class="info-value">{{ currentUser?.is_authenticated ? 'LEVEL 2' : 'GUEST' }}</span>
+          <span class="info-value">{{ currentUser?.is_authenticated ? 'LEVEL ' + (currentUser.access_level_number ?? '?') : 'GUEST' }}</span>
         </div>
         <div class="info-item">
           <span class="info-label">SYSTEM:</span>
@@ -219,13 +219,30 @@
                 <div class="card-body">
                   <div class="name-row">
                     <div class="name-faction">
-                      <h4 class="character-name">{{ character.first_name }} {{ character.last_name }}</h4>
-                      <span class="character-faction">{{ character.faction }}</span>
+                      <h4 class="character-name">
+                        <Redacted
+                          v-if="isRedacted(character, 'first_name')"
+                          :level="character.redaction_required_level"
+                        />
+                        <template v-else>{{ character.first_name }} {{ character.last_name }}</template>
+                      </h4>
+                      <span v-if="character.faction" class="character-faction">
+                        {{ character.faction }}
+                        <span v-if="character.faction_data && character.faction_data.rank" class="rank-info">
+                          / {{ character.faction_data.rank }}
+                        </span>
+                      </span>
                     </div>
                     <div class="right-info">
                       <div class="info-item">
                         <span class="info-label">EDAD</span>
-                        <span class="info-value">{{ calculateAge(character.birth_date) || 'N/A' }} años</span>
+                        <span class="info-value">
+                          <Redacted
+                            v-if="isRedacted(character, 'birth_date')"
+                            :level="character.redaction_required_level"
+                          />
+                          <template v-else>{{ calculateAge(character.birth_date) || 'N/A' }} años</template>
+                        </span>
                       </div>
                       <div class="info-item">
                         <span class="info-label">REGISTRADO</span>
@@ -323,19 +340,42 @@
               <div class="detail-grid">
                 <div class="detail-item">
                   <span class="detail-label">Nombre:</span>
-                  <span class="detail-value">{{ selectedCharacter.first_name }} {{ selectedCharacter.last_name }}</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'first_name')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ selectedCharacter.first_name }} {{ selectedCharacter.last_name }}</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">País:</span>
-                  <span class="detail-value">{{ selectedCharacter.country }}</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'country')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ selectedCharacter.country }}</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Edad:</span>
-                  <span class="detail-value">{{ calculateAge(selectedCharacter.birth_date) || 'N/A' }} años</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'birth_date')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <template v-else>{{ calculateAge(selectedCharacter.birth_date) || 'N/A' }} años</template>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Facción:</span>
-                  <span class="detail-value faction">{{ selectedCharacter.faction }}</span>
+                  <span class="detail-value faction">
+                    {{ selectedCharacter.faction || 'Sin facción' }}
+                    <span v-if="selectedCharacter.faction_data && selectedCharacter.faction_data.rank" class="rank-info">
+                      / {{ selectedCharacter.faction_data.rank }}
+                    </span>
+                  </span>
                 </div>
                 <div class="detail-item">
                   <span class="detail-label">Codename:</span>
@@ -348,10 +388,23 @@
               </div>
             </div>
             
-            <div class="detail-section" v-if="selectedCharacter.lore">
+            <div class="detail-section" v-if="selectedCharacter.lore || isRedacted(selectedCharacter, 'lore')">
               <h4 class="section-title">LORE Y BIOGRAFÍA</h4>
               <div class="lore-container">
-                <div class="lore-content" v-html="renderMarkdown(selectedCharacter.lore)"></div>
+                <Redacted
+                  v-if="isRedacted(selectedCharacter, 'lore')"
+                  block
+                  :length="180"
+                  :level="selectedCharacter.redaction_required_level"
+                />
+                <template v-else>
+                  <p v-if="selectedCharacter.lore_censored_by_owner" class="censorship-note">
+                    {{ selectedCharacter.lore_censorship_revealed
+                        ? 'Contiene tramos expurgados por su titular. Los estás viendo completos.'
+                        : 'Tramos de este expediente fueron expurgados por su titular.' }}
+                  </p>
+                  <div class="lore-content" v-html="renderMarkdown(selectedCharacter.lore)"></div>
+                </template>
               </div>
             </div>
             
@@ -443,6 +496,10 @@
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { debounce } from 'lodash'
+import Redacted from '@/components/Redacted.vue'
+
+// Campos que el viewer no puede leer: llegan vacios pero anunciados por la API.
+const isRedacted = (character, field) => !!character?.redacted?.includes(field)
 
 const route = useRoute()
 const router = useRouter()
@@ -1693,6 +1750,12 @@ onMounted(() => {
   text-overflow: ellipsis;
 }
 
+.character-faction .rank-info,
+.detail-value.faction .rank-info {
+  color: #888;
+  margin-left: 5px;
+}
+
 .character-faction {
   font-size: min(0.8rem, max(0.65rem, 1.8vw));
   color: #fc6f03;
@@ -2072,6 +2135,16 @@ body.modal-open {
   display: inline-block;
   font-family: 'Consolas', monospace;
   letter-spacing: 0.3px;
+}
+
+.censorship-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: rgba(170, 34, 34, 0.08);
+  border-left: 2px solid rgba(170, 34, 34, 0.5);
+  color: #999;
+  font-size: 0.75rem;
+  font-family: 'Consolas', monospace;
 }
 
 .lore-container {

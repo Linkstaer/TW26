@@ -340,6 +340,21 @@
             <small class="form-help">1-25 Bajo Rango · 26-50 Rango Medio · 51-75 Alto Rango · 76-100 Alto Mando</small>
           </div>
           <div class="form-group">
+            <label>Tarjeta de acceso:</label>
+            <select v-model="newRank.access_card_id">
+              <option value="">-- Sin tarjeta --</option>
+              <option
+                v-for="card in accessCards"
+                :key="card.id"
+                :value="String(card.id)"
+                :disabled="!card.assignable"
+              >
+                {{ card.display_name }}{{ card.assignable ? '' : ' (fuera de tu alcance)' }}
+              </option>
+            </select>
+            <small class="form-help">El nivel jerárquico no determina la tarjeta: un rango medio puede llevar L2, L4 o ninguna.</small>
+          </div>
+          <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" v-model="newRank.can_manage_members" />
               Puede gestionar miembros
@@ -358,7 +373,7 @@
             </label>
           </div>
           <div class="form-info">
-            <p>Las tarjetas de acceso son gestionadas exclusivamente por administradores desde el panel de moderación.</p>
+            <p>Solo podés asignar tarjetas hasta tu propio nivel de acceso. Las de nivel superior aparecen deshabilitadas.</p>
           </div>
         </div>
         <div class="modal-footer">
@@ -384,6 +399,21 @@
             <label>Nivel jerárquico:</label>
             <input type="number" v-model.number="editingRank.level" min="1" max="100" />
             <small class="form-help">1-25 Bajo Rango · 26-50 Rango Medio · 51-75 Alto Rango · 76-100 Alto Mando</small>
+          </div>
+          <div class="form-group">
+            <label>Tarjeta de acceso:</label>
+            <select v-model="editingRank.access_card_id">
+              <option value="">-- Sin tarjeta --</option>
+              <option
+                v-for="card in accessCards"
+                :key="card.id"
+                :value="String(card.id)"
+                :disabled="!card.assignable"
+              >
+                {{ card.display_name }}{{ card.assignable ? '' : ' (fuera de tu alcance)' }}
+              </option>
+            </select>
+            <small class="form-help">El nivel jerárquico no determina la tarjeta: un rango medio puede llevar L2, L4 o ninguna.</small>
           </div>
           <div class="form-group">
             <label class="checkbox-label">
@@ -494,6 +524,15 @@ const availableCharacters = ref([])
 const memberSearch = ref('')
 const showCreateRankModal = ref(false)
 const editingRank = ref(null)
+
+const newRank = ref({
+  name: '',
+  level: 10,
+  access_card_id: '',
+  can_manage_members: false,
+  can_review_applications: false,
+  can_assign_ranks: false
+})
 
 const inviteSearch = ref('')
 const inviteResults = ref([])
@@ -697,11 +736,14 @@ const createRank = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newRank.value)
     })
+    const data = await response.json()
     if (response.ok) {
       showCreateRankModal.value = false
       await loadFactionData()
       newRank.value = { name: '', level: 10, access_card_id: '', can_manage_members: false, can_review_applications: false, can_assign_ranks: false }
       alert('Rango creado')
+    } else {
+      alert(data.error || 'Error al crear el rango')
     }
   } catch (err) {
     console.error('Error:', err)
@@ -713,6 +755,7 @@ const editRank = (rank) => {
     id: rank.id,
     name: rank.name,
     level: rank.level,
+    access_card_id: rank.access_card ? String(rank.access_card.id) : '',
     can_manage_members: rank.can_manage_members,
     can_review_applications: rank.can_review_applications,
     can_assign_ranks: rank.can_assign_ranks
