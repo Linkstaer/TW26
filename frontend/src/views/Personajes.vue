@@ -428,6 +428,25 @@
                     :disabled="false"
                   />
                 </div>
+
+                <div class="form-group full-width">
+                  <label class="form-label">Foto del personaje</label>
+                  <input
+                    v-model="characterForm.photo_url"
+                    type="url"
+                    class="form-input"
+                    placeholder="https://..."
+                    maxlength="500"
+                  />
+                  <div class="form-hint">
+                    Enlace directo a una imagen (Discord, imgur, etc.). Se muestra
+                    junto al expediente y queda expurgada para quien no pueda leer la identidad.
+                  </div>
+                  <div v-if="characterForm.photo_url" class="photo-preview">
+                    <img :src="characterForm.photo_url" alt="Vista previa" @error="photoPreviewFailed = true" @load="photoPreviewFailed = false" />
+                    <span v-if="photoPreviewFailed" class="photo-error">No se pudo cargar esa imagen.</span>
+                  </div>
+                </div>
               </div>
             </div>
             
@@ -751,6 +770,20 @@
                   </button>
                 </div>
                 <div class="detail-item">
+                  <span class="detail-label">Tarjeta:</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'access_level')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <span
+                      v-else-if="selectedCharacter.faction_data && selectedCharacter.faction_data.card"
+                      class="card-chip"
+                    >{{ selectedCharacter.faction_data.card }}</span>
+                    <template v-else>Sin tarjeta</template>
+                  </span>
+                </div>
+                <div class="detail-item">
                   <span class="detail-label">Registrado:</span>
                   <span class="detail-value">{{ formatDateDDMMYYYY(selectedCharacter.created_at) }}</span>
                 </div>
@@ -767,6 +800,24 @@
               </div>
             </div>
             
+            <div class="detail-section" v-if="selectedCharacter.photo_url || isRedacted(selectedCharacter, 'photo_url')">
+              <h3 class="section-title">FOTOGRAFÍA</h3>
+              <div class="photo-container">
+                <Redacted
+                  v-if="isRedacted(selectedCharacter, 'photo_url')"
+                  block
+                  :length="60"
+                  :level="selectedCharacter.redaction_required_level"
+                />
+                <img
+                  v-else
+                  :src="selectedCharacter.photo_url"
+                  class="character-photo"
+                  alt="Fotografía del agente"
+                />
+              </div>
+            </div>
+
             <div class="detail-section" v-if="selectedCharacter.lore || isRedacted(selectedCharacter, 'lore')">
               <h3 class="section-title">LORE Y BIOGRAFÍA</h3>
               <div class="lore-container">
@@ -1032,6 +1083,7 @@ const fuseMyCharacters = ref(null)
 const searchResults = ref([])
 const isFuzzySearch = ref(false)
 const showSearchSuggestions = ref(false)
+const photoPreviewFailed = ref(false)
 
 // Campos que el viewer no puede leer: llegan vacios pero anunciados por la API.
 const isRedacted = (character, field) => !!character?.redacted?.includes(field)
@@ -1104,6 +1156,7 @@ const characterForm = reactive({
   country: '',
   birth_date: '',
   codename: '',
+  photo_url: '',
   morph: '',
   hat: '',
   nvg_r: 255,
@@ -1390,6 +1443,7 @@ const openEditForm = () => {
     characterForm.country = selectedCharacter.value.country || ''
     characterForm.birth_date = selectedCharacter.value.birth_date || ''
     characterForm.codename = selectedCharacter.value.codename || ''
+    characterForm.photo_url = selectedCharacter.value.photo_url || ''
     characterForm.lore = selectedCharacter.value.lore || ''
     
     // Morph data
@@ -1455,6 +1509,7 @@ const resetCharacterForm = () => {
   characterForm.country = ''
   characterForm.birth_date = ''
   characterForm.codename = ''
+  characterForm.photo_url = ''
   characterForm.morph = ''
   characterForm.hat = ''
   characterForm.shirt = ''
@@ -3621,6 +3676,42 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.06);
   padding: 0 4px;
   font-family: 'Consolas', monospace;
+}
+
+.photo-preview {
+  margin-top: 10px;
+}
+
+.photo-preview img {
+  max-width: 160px;
+  max-height: 160px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  object-fit: cover;
+}
+
+.photo-error {
+  display: block;
+  margin-top: 4px;
+  color: #aa6666;
+  font-size: 0.75rem;
+}
+
+.character-photo {
+  width: 100%;
+  max-width: 220px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  object-fit: cover;
+}
+
+.card-chip {
+  display: inline-block;
+  font-family: 'Consolas', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  color: #fc6f03;
+  background: rgba(252, 111, 3, 0.1);
+  border: 1px solid rgba(252, 111, 3, 0.35);
+  padding: 0.15rem 0.45rem;
 }
 
 .censorship-note {

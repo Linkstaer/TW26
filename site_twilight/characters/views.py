@@ -128,6 +128,8 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
 
     faction_name = None
     rank_name = None
+    card_display = None
+    card_level = None
     if membership:
         faction = membership.faction
         # El dueño conoce la facción de su propio personaje: mostrarle la
@@ -146,6 +148,15 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
             division = None
         else:
             rank_name = membership.rank.name if membership.rank else None
+            # La tarjeta delata igual que el rango: "L6 - Consejo O5" identifica
+            # a la facción. Además va detrás del mismo umbral que access_level
+            # (L4+ o acceso pleno), si no sería una forma de leer el clearance
+            # ajeno esquivando ese gate. display_name ya aplica el enmascarado
+            # L4/L5 de la spec §2.4.
+            card = membership.access_card
+            if card and (can_see_full or v_level >= 4):
+                card_display = card.display_name
+                card_level = card.level
 
     data = {
         "id": c.id,
@@ -154,13 +165,17 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
         "owner_id": c.owner_id,
         "owner_username": c.owner.roblox_username,
         "faction": faction_name or c.faction,
-        "faction_data": {"name": faction_name, "rank": rank_name}
+        "faction_data": {
+            "name": faction_name,
+            "rank": rank_name,
+            "card": card_display,
+            "card_level": card_level,
+        }
         if membership
         else None,
         "division": division,
-        "access_level": c.get_access_level()
-        if (can_see_full or v_level >= 4)
-        else None,
+        # card_level ya viene filtrado por fachada y por clearance.
+        "access_level": card_level,
         "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -189,6 +204,7 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
                 if c.birth_date
                 else None,
                 "age": _calculate_age(c.birth_date) if c.birth_date else None,
+                "photo_url": c.photo_url,
                 "lore": lore,
                 "lore_censored_by_owner": has_censorship,
                 "lore_censorship_revealed": has_censorship
@@ -196,7 +212,17 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
             }
         )
     else:
-        redacted += ["first_name", "last_name", "country", "birth_date", "age", "lore"]
+        redacted += [
+            "first_name",
+            "last_name",
+            "country",
+            "birth_date",
+            "age",
+            "lore",
+        ]
+        # La cara es identidad: si no podés leer el nombre, tampoco la foto.
+        if c.photo_url:
+            redacted.append("photo_url")
         data.update(
             {
                 "first_name": None,
@@ -204,6 +230,7 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
                 "country": None,
                 "birth_date": None,
                 "age": None,
+                "photo_url": None,
                 "lore": None,
                 "lore_censored_by_owner": False,
                 "lore_censorship_revealed": False,
@@ -236,7 +263,7 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
     else:
         redacted.append("morph")
 
-    if data.get("access_level") is None:
+    if membership and membership.access_card and card_level is None:
         redacted.append("access_level")
 
     data["redacted"] = redacted
@@ -350,6 +377,7 @@ def character_list_user(request):
                     else None,
                     "age": _calculate_age(c.birth_date) if c.birth_date else None,
                     "codename": c.codename,
+                    "photo_url": c.photo_url,
                     "faction": (_faction_data(c) or {}).get("name") or c.faction,
                     "faction_data": _faction_data(c),
                     "division": division_by_char.get(c.id),

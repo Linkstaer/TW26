@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxLengthValidator
+from django.core.validators import MaxLengthValidator, URLValidator
 
 User = settings.AUTH_USER_MODEL
 
@@ -26,6 +26,16 @@ class Character(models.Model):
     birth_date = models.DateField()
 
     codename = models.CharField(max_length=32, validators=[MaxLengthValidator(32)])
+
+    # Foto del personaje. Se guarda el enlace y no el archivo: el contenedor
+    # de Railway es efimero y cualquier subida se perderia en cada redeploy.
+    photo_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        validators=[URLValidator(schemes=["http", "https"])],
+        help_text="Enlace directo a la imagen (Discord, imgur, etc.)",
+    )
     # Campo legacy de texto; la pertenencia real vive en CharacterFactionMembership.
     # Opcional: un personaje puede estar sin facción (spec §1.3).
     faction = models.CharField(

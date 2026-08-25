@@ -382,12 +382,44 @@
                   <span class="detail-value highlight">{{ selectedCharacter.codename }}</span>
                 </div>
                 <div class="detail-item">
+                  <span class="detail-label">Tarjeta:</span>
+                  <span class="detail-value">
+                    <Redacted
+                      v-if="isRedacted(selectedCharacter, 'access_level')"
+                      :level="selectedCharacter.redaction_required_level"
+                    />
+                    <span
+                      v-else-if="selectedCharacter.faction_data && selectedCharacter.faction_data.card"
+                      class="card-chip"
+                    >{{ selectedCharacter.faction_data.card }}</span>
+                    <template v-else>Sin tarjeta</template>
+                  </span>
+                </div>
+                <div class="detail-item">
                   <span class="detail-label">Registrado:</span>
                   <span class="detail-value">{{ formatDateDDMMYYYY(selectedCharacter.created_at) }}</span>
                 </div>
               </div>
             </div>
             
+            <div class="detail-section" v-if="selectedCharacter.photo_url || isRedacted(selectedCharacter, 'photo_url')">
+              <h4 class="section-title">FOTOGRAFÍA</h4>
+              <div class="photo-container">
+                <Redacted
+                  v-if="isRedacted(selectedCharacter, 'photo_url')"
+                  block
+                  :length="60"
+                  :level="selectedCharacter.redaction_required_level"
+                />
+                <img
+                  v-else
+                  :src="selectedCharacter.photo_url"
+                  class="character-photo"
+                  alt="Fotografía del agente"
+                />
+              </div>
+            </div>
+
             <div class="detail-section" v-if="selectedCharacter.lore || isRedacted(selectedCharacter, 'lore')">
               <h4 class="section-title">LORE Y BIOGRAFÍA</h4>
               <div class="lore-container">
@@ -2135,6 +2167,24 @@ body.modal-open {
   display: inline-block;
   font-family: 'Consolas', monospace;
   letter-spacing: 0.3px;
+}
+
+.character-photo {
+  width: 100%;
+  max-width: 220px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  object-fit: cover;
+}
+
+.card-chip {
+  display: inline-block;
+  font-family: 'Consolas', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.5px;
+  color: #fc6f03;
+  background: rgba(252, 111, 3, 0.1);
+  border: 1px solid rgba(252, 111, 3, 0.35);
+  padding: 0.15rem 0.45rem;
 }
 
 .censorship-note {
