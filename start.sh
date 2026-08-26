@@ -22,9 +22,15 @@ elif [ $STATUS -ne 0 ]; then
 fi
 
 echo "[boot] 3/3 gunicorn en 0.0.0.0:${PORT:-8080}"
+# worker-class gthread: /api/events/ es un stream SSE que dura horas. Un worker
+# sync atiende una request por vez y el arbitro lo mata al superar --timeout, que
+# es lo que provocaba un WORKER TIMEOUT cada 2 minutos. Con hilos, el latido del
+# worker corre aparte y no depende de cuanto dure cada request.
 exec gunicorn site_twilight.wsgi:application \
     --bind "0.0.0.0:${PORT:-8080}" \
+    --worker-class gthread \
     --workers "${WEB_CONCURRENCY:-2}" \
+    --threads "${WEB_THREADS:-25}" \
     --timeout 120 \
     --access-logfile - \
     --error-logfile - \

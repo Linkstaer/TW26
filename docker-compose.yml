@@ -17,6 +17,17 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: site-twilight-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   web:
     build: .
     container_name: site-twilight-web
@@ -31,11 +42,14 @@ services:
       DEV: "True"
       ALLOWED_HOSTS: localhost,127.0.0.1
       PORT: "8000"
+      REDIS_URL: "redis://redis:6379/0"
       ROBLOX_CLIENT_ID: ${ROBLOX_CLIENT_ID}
       ROBLOX_CLIENT_SECRET: ${ROBLOX_CLIENT_SECRET}
       ROBLOX_REDIRECT_URI: ${ROBLOX_REDIRECT_URI}
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: >
       sh -c "python manage.py migrate &&

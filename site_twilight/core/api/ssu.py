@@ -10,7 +10,7 @@ import json
 from core.models import SiteState, SSUToggleLog
 from users.models import StaffRole
 from users.permissions import STAFF_PERMISSIONS
-from core.views import emit_ssu_status_change
+from core.events import emit_ssu_status_change
 
 
 def check_ssu_permission(user):

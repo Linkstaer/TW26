@@ -112,6 +112,10 @@ WSGI_APPLICATION = "site_twilight.wsgi.application"
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Canal de pub/sub para que los eventos SSE crucen los workers de gunicorn.
+# Sin esto el push queda encerrado en el proceso que lo emitio (ver core/events.py).
+REDIS_URL = os.getenv("REDIS_URL")
+
 if DATABASE_URL:
     DATABASES = {
         "default": dj_database_url.parse(

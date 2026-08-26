@@ -106,3 +106,24 @@ def on_faction_created(sender, instance, created, **kwargs):
         f"Nueva facción: {visible_name}",
         f"La facción {visible_name} ha sido establecida en el sitio.",
     )
+
+
+@receiver(post_save, sender="announcements.Notification")
+def on_notification_created(sender, instance, created, **kwargs):
+    """Empuja el contador de no leidas por SSE al usuario que la recibio."""
+    if not created:
+        return
+
+    from django.db import transaction
+
+    from core.events import emit_notification_count
+
+    user_id = instance.user_id
+
+    def push():
+        # Las notificaciones se crean dentro de transacciones (factions/views.py):
+        # contar antes del commit mandaria un numero que puede no existir nunca.
+        unread = sender.objects.filter(user_id=user_id, is_read=False).count()
+        emit_notification_count(user_id, unread)
+
+    transaction.on_commit(push)

@@ -7,6 +7,12 @@ class SiteState(models.Model):
     ssu_status = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
     
+    @classmethod
+    def get(cls):
+        """Estado global del sitio. Es una fila unica, siempre pk=1."""
+        state, _ = cls.objects.get_or_create(pk=1, defaults={"ssu_status": False})
+        return state
+
     def __str__(self):
         return f"Site State - SSU: {'ON' if self.ssu_status else 'OFF'}"
 

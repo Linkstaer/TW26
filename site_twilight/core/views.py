@@ -1,14 +1,15 @@
+import json
+import logging
+from queue import Empty
+
+from django.db import connection
 from django.http import JsonResponse, StreamingHttpResponse
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
+
+from .events import KEEPALIVE_SECONDS, event_bus
 from .models import SiteState
 from .api.auth.user import get_current_user_service
-import json
-import time
-import threading
-from queue import Queue
 
-# Create your views here.
+logger = logging.getLogger(__name__)
 
 
 def api_get_ssu_status(request):
@@ -20,41 +21,9 @@ def api_get_current_user(request):
     return JsonResponse(data)
 
 
-class EventEmitter:
-    """Simple event emitter for SSE"""
-
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._clients = []
-        return cls._instance
-
-    def add_client(self, client):
-        with self._lock:
-            self._clients.append(client)
-
-    def remove_client(self, client):
-        with self._lock:
-            if client in self._clients:
-                self._clients.remove(client)
-
-    def emit(self, event_type, data):
-        with self._lock:
-            clients = self._clients.copy()
-        for client in clients:
-            try:
-                client.put_nowait({"type": event_type, "data": data})
-            except:
-                pass
-
-
-# Global event emitter instance
-event_emitter = EventEmitter()
+def _frame(event_type, data):
+    """Un evento con el formato de linea que exige text/event-stream."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
 def sse_events(request):
@@ -64,55 +33,47 @@ def sse_events(request):
 
     from announcements.models import Notification
 
-    # Create a queue for this client
-    client_queue = Queue(maxsize=10)
-    event_emitter.add_client(client_queue)
+    user_id = request.user.id
+    subscriber = event_bus.subscribe(user_id)
 
     def event_stream():
         try:
-            # Send initial data
-            yield f"event: connected\ndata: {json.dumps({'status': 'connected'})}\n\n"
+            yield _frame("connected", {"status": "connected"})
 
-            # Send initial notification count
             try:
-                notification_count = Notification.objects.filter(
-                    user=request.user, is_read=False
+                unread = Notification.objects.filter(
+                    user_id=user_id, is_read=False
                 ).count()
-                yield f"event: notification_count\ndata: {json.dumps({'count': notification_count})}\n\n"
-            except:
-                pass
+                yield _frame("notification_count", {"count": unread})
+            except Exception:
+                logger.warning(
+                    "SSE: no se pudo leer el contador inicial", exc_info=True
+                )
 
-            # Send initial SSU status
             try:
-                ssu_status = SiteState.get().ssu_status
-                yield f"event: ssu_status\ndata: {json.dumps({'active': ssu_status})}\n\n"
-            except:
-                pass
+                yield _frame("ssu_status", {"active": SiteState.get().ssu_status})
+            except Exception:
+                logger.warning("SSE: no se pudo leer el estado SSU inicial", exc_info=True)
 
-            # Keep connection open and stream events
+            # De aca en adelante el stream no toca la base. Si no soltamos la
+            # conexion, cada cliente conectado se queda con una de Postgres
+            # ocupada durante horas y se agota el pool del servidor.
+            connection.close()
+
             while True:
                 try:
-                    event = client_queue.get(timeout=30)
-                    yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
-                except:
-                    # Send keepalive
-                    yield f": keepalive\n\n"
-        except GeneratorExit:
-            pass
+                    event = subscriber.queue.get(timeout=KEEPALIVE_SECONDS)
+                except Empty:
+                    # Sin eventos: mandamos un comentario para que el proxy y el
+                    # navegador no den la conexion por muerta.
+                    yield ": keepalive\n\n"
+                    continue
+
+                yield _frame(event["type"], event["data"])
         finally:
-            event_emitter.remove_client(client_queue)
+            event_bus.unsubscribe(subscriber)
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
-
-
-def emit_ssu_status_change(new_status):
-    """Call this function when SSU status changes"""
-    event_emitter.emit("ssu_status", {"active": new_status})
-
-
-def emit_notification(user_id, count):
-    """Call this function when a user receives a new notification"""
-    event_emitter.emit("notification", {"count": count, "user_id": user_id})
