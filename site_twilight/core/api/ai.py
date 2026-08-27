@@ -19,18 +19,51 @@ respuestas institucionales pregeneradas.
 
 import json
 import os
+from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from core.models import AIQueryLog
+
+CONTEXT_CACHE_SECONDS = 60
 
 LEVEL_ORDER = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
 
 MAX_QUERY_LENGTH = 2000
 MAX_CONTEXT_ITEMS = 25
 SNIPPET = 700
+
+# Cada consulta con ANTHROPIC_API_KEY configurada es una llamada facturable a
+# la API. Sin tope, un solo usuario logueado puede vaciar el presupuesto.
+RATE_LIMIT_QUERIES = 15
+RATE_LIMIT_WINDOW_SECONDS = 300
+
+
+def _rate_limited(user):
+    """
+    Devuelve los segundos que faltan para poder volver a consultar, o 0.
+    Se apoya en AIQueryLog, que ya se escribe en cada consulta: no hace falta
+    un backend de cache aparte y sobrevive a los reinicios del contenedor.
+    """
+    from django.utils import timezone
+
+    if user.is_superuser:
+        return 0
+
+    window_start = timezone.now() - timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
+    recent = AIQueryLog.objects.filter(
+        user=user, created_at__gte=window_start
+    ).order_by("created_at")
+
+    if recent.count() < RATE_LIMIT_QUERIES:
+        return 0
+
+    oldest = recent.first()
+    elapsed = (timezone.now() - oldest.created_at).total_seconds()
+    return max(1, int(RATE_LIMIT_WINDOW_SECONDS - elapsed))
 
 
 def _build_context(user):
@@ -90,9 +123,9 @@ def _build_context(user):
             parts.append(f"EVENTO {event.title}: {event.description[:SNIPPET]}")
 
     # --- Facciones con fachadas (spec §2.1) ---
-    for faction in Faction.objects.filter(is_public=True):
+    for faction in Faction.objects.filter(is_public=True).prefetch_related("ranks"):
         name = faction.get_visible_name(user)
-        ranks = ", ".join(r.name for r in faction.ranks.all().order_by("level"))
+        ranks = ", ".join(r.name for r in sorted(faction.ranks.all(), key=lambda r: r.level))
         parts.append(
             f"FACCIÓN {name} ({faction.get_faction_type_display()}, "
             f"{faction.get_status_display()}). Jerarquía: {ranks or 'N/D'}. "
@@ -211,6 +244,19 @@ def api_ai_query(request):
     if len(query) > MAX_QUERY_LENGTH:
         return JsonResponse({"error": "Consulta demasiado larga"}, status=400)
 
+    retry_after = _rate_limited(request.user)
+    if retry_after:
+        return JsonResponse(
+            {
+                "error": (
+                    "■ TERMINAL RAISA — Límite de consultas alcanzado. "
+                    f"Reintente en {retry_after} segundos."
+                ),
+                "retry_after": retry_after,
+            },
+            status=429,
+        )
+
     mode = data.get("mode", "rp")
     # Modo técnico: solo staff / roles autorizados (spec §7)
     if mode == "technical" and not (
@@ -220,7 +266,16 @@ def api_ai_query(request):
     ):
         mode = "rp"
 
-    context_parts, accessible, level_num = _build_context(request.user)
+    # Armar el contexto barre SCPs, documentos, anuncios y facciones enteros.
+    # En una ráfaga de consultas seguidas eso se repite idéntico: se cachea
+    # por usuario un rato corto, para que un cambio de tarjeta o un documento
+    # nuevo se reflejen igual de rápido.
+    cache_key = f"ai_ctx:{request.user.id}"
+    cached = cache.get(cache_key)
+    if cached is None:
+        cached = _build_context(request.user)
+        cache.set(cache_key, cached, CONTEXT_CACHE_SECONDS)
+    context_parts, accessible, level_num = cached
     card = request.user.get_highest_access_card()
     card_display = card.display_name if card else "L1"
     access_level = f"L{level_num}"

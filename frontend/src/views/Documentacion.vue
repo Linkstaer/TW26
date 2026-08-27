@@ -10,7 +10,16 @@
     <main class="page-content">
       <!-- Detalle -->
       <div v-if="selectedDoc" class="doc-detail">
-        <button class="btn btn-ghost" @click="selectedDoc = null">← VOLVER</button>
+        <div class="detail-toolbar">
+          <button class="btn btn-ghost" @click="closeDoc">← VOLVER</button>
+          <div class="detail-actions" v-if="selectedDoc.can_edit">
+            <button v-if="!editing" class="btn btn-tiny" @click="startEdit">EDITAR</button>
+            <button class="btn btn-tiny" @click="toggleHistory">
+              {{ showHistory ? 'OCULTAR HISTORIAL' : 'HISTORIAL' }}
+            </button>
+          </div>
+        </div>
+
         <div class="doc-meta">
           <span class="level-chip">{{ selectedDoc.min_access_level }}</span>
           <span class="doc-type">{{ typeLabel(selectedDoc.doc_type) }}</span>
@@ -18,9 +27,36 @@
             Autor: {{ selectedDoc.author }}
             <template v-if="selectedDoc.author_faction"> ({{ selectedDoc.author_faction }})</template>
           </span>
+          <span class="doc-date" v-if="selectedDoc.updated_at">
+            Última edición: {{ formatDateTime(selectedDoc.updated_at) }}
+          </span>
         </div>
         <h2 class="doc-title">{{ selectedDoc.title }}</h2>
-        <pre class="doc-content">{{ selectedDoc.content }}</pre>
+
+        <pre v-if="!editing" class="doc-content">{{ selectedDoc.content }}</pre>
+        <div v-else class="edit-area">
+          <textarea v-model="editContent" rows="18"></textarea>
+          <input v-model="editSummary" placeholder="Resumen del cambio (opcional)" />
+          <div class="edit-actions">
+            <button class="btn btn-primary" @click="saveDoc">GUARDAR CAMBIOS</button>
+            <button class="btn btn-ghost" @click="cancelEdit">CANCELAR</button>
+          </div>
+          <div v-if="error" class="error-text">{{ error }}</div>
+        </div>
+
+        <!-- Versionado del documento -->
+        <div v-if="showHistory" class="history-section">
+          <div class="history-title">HISTORIAL DE EDICIONES</div>
+          <div v-if="historyLoading" class="loading-text">RECUPERANDO REGISTROS...</div>
+          <div v-else-if="!history.length" class="empty-text">Sin ediciones registradas.</div>
+          <div v-for="entry in history" :key="entry.id" class="history-item">
+            <span class="doc-date">{{ formatDateTime(entry.created_at) }}</span>
+            <span class="doc-author">{{ entry.edited_by || 'desconocido' }}</span>
+            <span class="history-summary" v-if="entry.edit_summary">
+              {{ entry.edit_summary }}
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Listado -->
@@ -88,6 +124,14 @@ const createOpen = ref(false)
 const showCreate = ref(true) // el backend valida los permisos reales
 const form = ref({ title: '', doc_type: 'other', min_access_level: 'L1', content: '' })
 
+// Edición e historial (spec §5.2 / §5.3)
+const editing = ref(false)
+const editContent = ref('')
+const editSummary = ref('')
+const showHistory = ref(false)
+const history = ref([])
+const historyLoading = ref(false)
+
 const TYPE_LABELS = {
   procedure: 'Procedimiento',
   memo: 'Memo',
@@ -105,6 +149,13 @@ const getCsrf = () => {
 }
 
 const formatDate = (iso) => (iso ? new Date(iso).toLocaleDateString('es-ES') : '')
+const formatDateTime = (iso) =>
+  iso
+    ? new Date(iso).toLocaleString('es-ES', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      })
+    : ''
 
 const filteredDocs = computed(() => {
   const q = search.value.toLowerCase()
@@ -127,7 +178,62 @@ const fetchDocs = async () => {
 
 const openDoc = async (slug) => {
   const res = await fetch(`/api/documents/${slug}/`)
-  if (res.ok) selectedDoc.value = await res.json()
+  if (res.ok) {
+    selectedDoc.value = await res.json()
+    editing.value = false
+    showHistory.value = false
+    history.value = []
+    error.value = ''
+  }
+}
+
+const closeDoc = () => {
+  selectedDoc.value = null
+  editing.value = false
+  showHistory.value = false
+}
+
+const startEdit = () => {
+  editContent.value = selectedDoc.value.content
+  editSummary.value = ''
+  error.value = ''
+  editing.value = true
+}
+
+const cancelEdit = () => {
+  editing.value = false
+  error.value = ''
+}
+
+const saveDoc = async () => {
+  error.value = ''
+  const res = await fetch(`/api/documents/${selectedDoc.value.slug}/edit/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
+    body: JSON.stringify({ content: editContent.value, summary: editSummary.value })
+  })
+  const data = await res.json()
+  if (res.ok) {
+    // Recargar en vez de parchear en memoria: así el updated_at y el
+    // historial quedan alineados con lo que guardó el backend.
+    await openDoc(selectedDoc.value.slug)
+    await fetchDocs()
+  } else {
+    error.value = data.error || 'Error al guardar'
+  }
+}
+
+const toggleHistory = async () => {
+  showHistory.value = !showHistory.value
+  if (!showHistory.value || history.value.length) return
+
+  historyLoading.value = true
+  try {
+    const res = await fetch(`/api/documents/${selectedDoc.value.slug}/history/`)
+    if (res.ok) history.value = (await res.json()).history || []
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 const createDoc = async () => {
@@ -278,5 +384,45 @@ input, select, textarea {
 }
 .modal h3 { margin: 0 0 6px; letter-spacing: 2px; color: #e8e8f0; }
 .edit-actions { display: flex; gap: 10px; }
+
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.detail-actions { display: flex; gap: 8px; }
+.btn-tiny {
+  padding: 5px 12px;
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+}
+.edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.history-section {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a35;
+}
+.history-title {
+  color: #aa2222;
+  letter-spacing: 2px;
+  font-size: 0.75rem;
+  margin-bottom: 10px;
+}
+.history-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 4px;
+  border-bottom: 1px solid #16161e;
+  font-size: 0.82rem;
+}
+.history-summary { color: #c8c8d0; flex: 1 1 220px; }
 
 </style>

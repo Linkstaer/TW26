@@ -62,6 +62,36 @@ def _apply_owner_censorship(text, mode):
     return _CENSOR_RE.sub(repl, text), found
 
 
+def divisions_by_character(character_ids=None):
+    """
+    Mapa {character_id: nombre_de_división} en dos queries.
+
+    Antes cada llamador iteraba la tabla intermedia y hacía un
+    FactionDivision.objects.filter(id=...).first() por fila: un N+1 sobre el
+    listado completo de personajes, repetido en tres vistas distintas.
+    """
+    from factions.models import FactionDivision
+
+    through = FactionDivision.members.through.objects
+    if character_ids is not None:
+        through = through.filter(character_id__in=list(character_ids))
+
+    rows = list(through.values_list("character_id", "factiondivision_id"))
+    if not rows:
+        return {}
+
+    names = dict(
+        FactionDivision.objects.filter(
+            id__in={division_id for _, division_id in rows}
+        ).values_list("id", "name")
+    )
+    return {
+        character_id: names[division_id]
+        for character_id, division_id in rows
+        if division_id in names
+    }
+
+
 def _viewer_access(user):
     """Nivel de visibilidad del usuario que consulta (spec §4.2)."""
     if user.is_superuser:
@@ -176,6 +206,14 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
         "division": division,
         # card_level ya viene filtrado por fachada y por clearance.
         "access_level": card_level,
+        # Integración con SCP (spec §3.4): si el personaje es Actor SCP, su
+        # archivo aparece en el perfil. Va detrás del mismo gate que el resto
+        # de la identidad —saber quién interpreta a un SCP es información de
+        # contención, no de dominio público.
+        "scp_actor": c.get_scp_actor_data()
+        if (is_owner or is_moderator or access["full_access"])
+        else None,
+        "is_scp_actor": c.is_scp_actor,
         "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -276,11 +314,23 @@ def _serialize_character(c, viewer, access, membership=None, division=None):
 @login_required
 @require_http_methods(["GET"])
 def character_list_all(request):
-    from factions.models import CharacterFactionMembership, FactionDivision
+    """
+    Database de IDs (spec §4).
+
+    Búsqueda por nombre / codename / usuario (§4.3) y filtros avanzados por
+    facción, nivel de tarjeta, estado y condición de Actor SCP.
+    """
+    from factions.models import CharacterFactionMembership, Faction
 
     search_query = request.GET.get("search", "")
+    faction_filter = request.GET.get("faction", "")
+    level_filter = (request.GET.get("level", "") or "").upper()
+    status_filter = request.GET.get("status", "")
+    actor_filter = request.GET.get("actor", "")
 
-    characters = Character.objects.select_related("owner").all().order_by("codename")
+    characters = (
+        Character.objects.select_related("owner", "scp_file").all().order_by("codename")
+    )
 
     if search_query:
         characters = characters.filter(
@@ -290,45 +340,84 @@ def character_list_all(request):
             | Q(owner__roblox_username__icontains=search_query)
         )
 
+    if status_filter in dict(Character.Status.choices):
+        characters = characters.filter(status=status_filter)
+
+    if actor_filter in ("true", "1"):
+        characters = characters.filter(scp_file__isnull=False)
+    elif actor_filter in ("false", "0"):
+        characters = characters.filter(scp_file__isnull=True)
+
+    # El filtro por facción acepta el id real o el nombre visible. Se resuelve
+    # sobre las facciones que el viewer puede identificar: filtrar por el
+    # nombre real de una facción clasificada sería una forma de confirmar la
+    # fachada sin tener el nivel para verla.
+    #
+    # Primero se resuelven las FACCIONES que matchean (decenas) y recién
+    # después se filtran los personajes con una subconsulta. Hacerlo al revés
+    # —juntar ids de personaje en Python y pasarlos como id__in— genera un IN
+    # sin cota: Postgres corta en 65535 parámetros por consulta.
+    if faction_filter:
+        matching_factions = [
+            faction.id
+            for faction in Faction.objects.all()
+            if str(faction.id) == faction_filter
+            or faction.get_visible_name(request.user).lower()
+            == faction_filter.lower()
+        ]
+        characters = characters.filter(
+            id__in=CharacterFactionMembership.objects.filter(
+                status=CharacterFactionMembership.Status.ACTIVE,
+                faction_id__in=matching_factions,
+            ).values("character_id")
+        )
+
+    characters = list(characters)
+    character_ids = [c.id for c in characters]
+
     # Membresías activas (con facción para fachadas)
     memberships = CharacterFactionMembership.objects.filter(
-        status=CharacterFactionMembership.Status.ACTIVE
+        character_id__in=character_ids,
+        status=CharacterFactionMembership.Status.ACTIVE,
     ).select_related("faction", "rank", "access_card")
     membership_by_char = {m.character_id: m for m in memberships}
 
-    # Membresías de división
-    division_memberships = FactionDivision.members.through.objects.all()
-    division_by_char = {}
-    for dm in division_memberships:
-        division = FactionDivision.objects.filter(id=dm.factiondivision_id).first()
-        if division:
-            division_by_char[dm.character_id] = division.name
+    division_by_char = divisions_by_character(character_ids)
 
     access = _viewer_access(request.user)
 
     results = []
     for c in characters:
+        membership = membership_by_char.get(c.id)
+        if level_filter in LEVEL_ORDER:
+            card = membership.access_card if membership else None
+            if (card.level if card else "L1") != level_filter:
+                continue
         data = _serialize_character(
             c,
             request.user,
             access,
-            membership=membership_by_char.get(c.id),
+            membership=membership,
             division=division_by_char.get(c.id),
         )
         if data is not None:
             results.append(data)
 
-    return JsonResponse({"results": results})
+    return JsonResponse({"results": results, "count": len(results)})
 
 
 @login_required
 @require_http_methods(["GET"])
 def character_list_user(request):
-    from factions.models import CharacterFactionMembership, FactionDivision
+    from factions.models import CharacterFactionMembership
 
     search_query = request.GET.get("search", "")
 
-    characters = Character.objects.filter(owner=request.user).order_by("codename")
+    characters = (
+        Character.objects.filter(owner=request.user)
+        .select_related("owner", "scp_file")
+        .order_by("codename")
+    )
 
     if search_query:
         characters = characters.filter(
@@ -347,13 +436,7 @@ def character_list_user(request):
             status=CharacterFactionMembership.Status.ACTIVE,
         ).select_related("faction", "rank")
     }
-    division_by_char = {}
-    for dm in FactionDivision.members.through.objects.filter(
-        character_id__in=[c.id for c in characters]
-    ):
-        division = FactionDivision.objects.filter(id=dm.factiondivision_id).first()
-        if division:
-            division_by_char[dm.character_id] = division.name
+    division_by_char = divisions_by_character([c.id for c in characters])
 
     def _faction_data(c):
         m = membership_by_char.get(c.id)
@@ -402,6 +485,9 @@ def character_list_user(request):
                     "crtag_b": c.crtag_b,
                     "rhat": c.rhat,
                     "morph_command": c.morph_command(),
+                    # El dueño siempre ve su propio archivo de Actor SCP (§3.4)
+                    "scp_actor": c.get_scp_actor_data(),
+                    "is_scp_actor": c.is_scp_actor,
                     "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 for c in characters
@@ -415,7 +501,9 @@ def character_list_user(request):
 def character_detail(request, pk):
     from factions.models import CharacterFactionMembership
 
-    character = get_object_or_404(Character, pk=pk)
+    character = get_object_or_404(
+        Character.objects.select_related("owner", "scp_file"), pk=pk
+    )
 
     membership = (
         CharacterFactionMembership.objects.filter(

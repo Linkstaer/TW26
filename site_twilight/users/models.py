@@ -63,24 +63,15 @@ class User(AbstractUser):
     is_booster = models.BooleanField(default=False)
 
     def has_permission(self, permission: str) -> bool:
-        print(f"Checking permission '{permission}' for user {self.username}")  # Debug
-
-        # Check superuser first
         if self.is_superuser:
-            print("User is superuser - all permissions granted")
             return True
 
-        # Check staff permissions
         for role in self.staff_roles.all():
             perms_by_level = STAFF_PERMISSIONS.get(role.scope, {})
             for lvl in range(1, role.level + 1):
                 if permission in perms_by_level.get(lvl, set()):
-                    print(
-                        f"Permission '{permission}' found in role {role.scope} level {lvl}"
-                    )
                     return True
 
-        print(f"Permission '{permission}' not found for user")
         return False
 
     def update_warning_count(self):

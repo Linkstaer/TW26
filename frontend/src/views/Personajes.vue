@@ -198,6 +198,60 @@
           </div>
         </div>
 
+        <!-- Filtros avanzados de la Database (spec §4.3) -->
+        <div class="advanced-filters" v-if="activeView === 'all'">
+          <button class="filters-toggle" @click="showFilters = !showFilters">
+            <span>FILTROS AVANZADOS</span>
+            <span class="filters-count" v-if="activeFilterCount">{{ activeFilterCount }}</span>
+            <span class="filters-caret">{{ showFilters ? '▲' : '▼' }}</span>
+          </button>
+
+          <div v-if="showFilters" class="filters-body">
+            <label class="filter-field">
+              <span class="filter-label">FACCIÓN</span>
+              <select v-model="filters.faction" @change="loadCharacters">
+                <option value="">Todas</option>
+                <option v-for="name in factionOptions" :key="name" :value="name">
+                  {{ name }}
+                </option>
+              </select>
+            </label>
+
+            <label class="filter-field">
+              <span class="filter-label">NIVEL DE TARJETA</span>
+              <select v-model="filters.level" @change="loadCharacters">
+                <option value="">Todos</option>
+                <option v-for="l in ['L1','L2','L3','L4','L5','L6']" :key="l" :value="l">
+                  {{ l }}
+                </option>
+              </select>
+            </label>
+
+            <label class="filter-field">
+              <span class="filter-label">ESTADO</span>
+              <select v-model="filters.status" @change="loadCharacters">
+                <option value="">Todos</option>
+                <option value="active">Activo</option>
+                <option value="classified">Clasificado</option>
+                <option value="deleted">Eliminado</option>
+              </select>
+            </label>
+
+            <label class="filter-field">
+              <span class="filter-label">ACTOR SCP</span>
+              <select v-model="filters.actor" @change="loadCharacters">
+                <option value="">Indistinto</option>
+                <option value="true">Solo actores</option>
+                <option value="false">Sin archivo SCP</option>
+              </select>
+            </label>
+
+            <button class="filters-clear" v-if="activeFilterCount" @click="clearFilters">
+              LIMPIAR
+            </button>
+          </div>
+        </div>
+
         <!-- Botón para añadir nuevo agente (solo en Mis Agentes) -->
         <div class="add-agent-section" v-if="activeView === 'mine' && !showCreateForm && !showEditForm && !selectedCharacter">
           <button class="add-agent-button" @click="showCreateForm = true">
@@ -1077,6 +1131,30 @@ const formErrors = ref({})
 
 const userPermissions = ref([])
 
+// Filtros avanzados de la Database (spec §4.3)
+const showFilters = ref(false)
+const filters = ref({ faction: '', level: '', status: '', actor: '' })
+
+const activeFilterCount = computed(
+  () => Object.values(filters.value).filter(Boolean).length
+)
+
+// Las opciones de facción salen de lo que el usuario ya puede ver: listar
+// facciones que no le corresponden delataría su existencia.
+const factionOptions = computed(() => {
+  const names = new Set()
+  for (const character of characters.value) {
+    const name = character.faction_data?.name || character.faction
+    if (name) names.add(name)
+  }
+  return [...names].sort()
+})
+
+const clearFilters = () => {
+  filters.value = { faction: '', level: '', status: '', actor: '' }
+  loadCharacters()
+}
+
 // estados para fuzzy search
 const fuseAllCharacters = ref(null)
 const fuseMyCharacters = ref(null)
@@ -1270,8 +1348,17 @@ const loadCharacters = async () => {
     let endpoint = '/api/characters/all/'
     if (activeView.value === 'mine') {
       endpoint = '/api/characters/mine/'
+    } else {
+      // Los filtros avanzados (spec §4.3) los resuelve el backend: filtrar en
+      // el cliente solo alcanzaría a los personajes que ya bajaron, y la
+      // matriz de visibilidad decide en el servidor qué se baja.
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters.value)) {
+        if (value) params.set(key, value)
+      }
+      if (params.toString()) endpoint += `?${params.toString()}`
     }
-    
+
     const response = await fetch(endpoint)
     const data = await response.json()
     
@@ -4973,6 +5060,91 @@ onMounted(() => {
   color: #aa2222;
   font-weight: 700;
   font-family: 'Consolas', monospace;
+}
+
+/* --- Filtros avanzados de la Database (spec §4.3) --- */
+.advanced-filters {
+  margin: 0 0 20px;
+}
+.filters-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid #2a2a35;
+  color: #8a8a99;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 1.5px;
+}
+.filters-toggle:hover {
+  border-color: #aa2222;
+  color: #d8d8e0;
+}
+.filters-count {
+  background: #aa2222;
+  color: #fff;
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.filters-caret {
+  font-size: 0.6rem;
+}
+.filters-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-end;
+  margin-top: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #2a2a35;
+  border-radius: 4px;
+}
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 160px;
+  flex: 1 1 160px;
+}
+.filter-label {
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  color: #6a6a78;
+}
+.filter-field select {
+  background: #12121a;
+  border: 1px solid #2a2a35;
+  color: #d8d8e0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+.filter-field select:focus {
+  outline: none;
+  border-color: #aa2222;
+}
+.filters-clear {
+  background: transparent;
+  border: 1px solid #444;
+  color: #999;
+  padding: 8px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.7rem;
+  letter-spacing: 1.5px;
+}
+.filters-clear:hover {
+  border-color: #aa2222;
+  color: #d8d8e0;
 }
 
 </style>

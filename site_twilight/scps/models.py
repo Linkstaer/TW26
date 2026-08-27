@@ -143,6 +143,48 @@ class SCP(models.Model):
 
         return False, "Sin permisos para agregar apéndices"
 
+    def is_actor(self, user) -> bool:
+        """El usuario es el dueño del personaje que interpreta este SCP (§3.4)."""
+        if not (user and user.is_authenticated and self.actor_character_id):
+            return False
+        return self.actor_character.owner_id == user.id
+
+    def get_actor_data(self, user=None):
+        """
+        Datos del Actor SCP asociado (spec §3.4).
+
+        El personaje detrás del SCP es información sensible: se muestra el
+        codename y el dueño solo a quien ya puede editar el archivo, al propio
+        actor o a la supervisión de actores. Al resto se le dice únicamente
+        que el SCP tiene actor asignado.
+        """
+        if not self.actor_character_id:
+            return None
+
+        character = self.actor_character
+        can_see_identity = bool(
+            user
+            and user.is_authenticated
+            and (
+                user.is_superuser
+                or self.is_actor(user)
+                or user.has_permission("supervise_actors_basic")
+                or self.can_user_edit(user)[0]
+            )
+        )
+
+        data = {"has_actor": True, "character_id": None, "codename": None, "owner": None}
+        if can_see_identity:
+            data.update(
+                {
+                    "character_id": character.id,
+                    "codename": character.codename,
+                    "owner": character.owner.roblox_username,
+                    "owner_roblox_id": character.owner.roblox_id,
+                }
+            )
+        return data
+
     def to_dict(self, user=None):
         """Serializa el SCP según el nivel de acceso del usuario"""
         accessible_levels = (
@@ -154,6 +196,10 @@ class SCP(models.Model):
             "scp_id": self.scp_id,
             "title": self.title,
             "object_class": self.object_class,
+            "object_class_display": self.get_object_class_display(),
+            # Integración con personajes (spec §3.4)
+            "actor": self.get_actor_data(user),
+            "is_actor": self.is_actor(user),
             # Apéndices filtrados por nivel de acceso (spec §3.2)
             "appendices": [
                 a
@@ -206,6 +252,54 @@ class SCPEditLog(models.Model):
 
     def __str__(self):
         return f"{self.scp.scp_id} - {self.section} - {self.created_at}"
+
+
+class SCPActorLog(models.Model):
+    """
+    Registro de acciones de los Actores SCP (spec §3.4).
+
+    "Si un personaje es Actor SCP: el SCP aparece en su perfil de personaje;
+    sus acciones quedan registradas en logs." Cubre tanto la asignación /
+    remoción del actor (que hace la supervisión) como las intervenciones que
+    el propio actor registra sobre su archivo.
+    """
+
+    class Action(models.TextChoices):
+        ASSIGNED = "assigned", "Actor asignado"
+        UNASSIGNED = "unassigned", "Actor removido"
+        FILE_EDITED = "file_edited", "Archivo editado por el actor"
+        APPENDIX_ADDED = "appendix_added", "Apéndice agregado por el actor"
+        RP_ACTION = "rp_action", "Acción de roleplay registrada"
+
+    scp = models.ForeignKey(SCP, on_delete=models.CASCADE, related_name="actor_logs")
+    character = models.ForeignKey(
+        "characters.Character",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scp_actor_logs",
+    )
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="scp_actor_actions",
+    )
+
+    action = models.CharField(max_length=20, choices=Action.choices)
+    description = models.TextField(blank=True)
+    details = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Log de Actor SCP"
+        verbose_name_plural = "Logs de Actores SCP"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["scp", "-created_at"])]
+
+    def __str__(self):
+        return f"{self.scp.scp_id} - {self.get_action_display()}"
 
 
 class Document(models.Model):

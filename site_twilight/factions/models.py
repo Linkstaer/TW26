@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 
 LEVEL_ORDER = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5, "L6": 6}
@@ -113,11 +114,24 @@ class AccessCard(models.Model):
         """Scientific Department: apéndices y comentarios, no la base."""
         return self.card_type == self.CardType.SCIENTIFIC
 
+    DEFAULT_CARD_NAME = "Nivel 1 - Básico"
+
     @classmethod
     def get_default_card(cls):
-        """Tarjeta L1 por defecto para usuarios sin membresías."""
+        """
+        Tarjeta L1 por defecto para usuarios sin membresías.
+
+        get_highest_access_card() la llama en cada request de un usuario sin
+        facción, que es el caso más común: hacer get_or_create ahí metía una
+        escritura en el path de lectura más caliente del sitio. Se busca
+        primero y solo se crea si de verdad no existe.
+        """
+        card = cls.objects.filter(name=cls.DEFAULT_CARD_NAME).first()
+        if card is not None:
+            return card
+
         card, _ = cls.objects.get_or_create(
-            name="Nivel 1 - Básico",
+            name=cls.DEFAULT_CARD_NAME,
             defaults={
                 "level": cls.Level.L1,
                 "card_type": cls.CardType.STANDARD,
@@ -181,7 +195,7 @@ class Faction(models.Model):
     # Fachada para facciones clasificadas
     is_classified = models.BooleanField(default=False)
     facade_name = models.CharField(
-        max_length=100, blank=True, help_text="Nombre visible代替 real"
+        max_length=100, blank=True, help_text="Nombre visible en lugar del real"
     )
 
     # Visibilidad
@@ -223,16 +237,51 @@ class Faction(models.Model):
     def __str__(self):
         return self.display_name
 
+    def can_user_see_real_identity(self, user=None) -> bool:
+        """
+        Única regla de fachada del sistema (spec §2.1/§2.4).
+
+        Antes esto vivía duplicado entre get_visible_name (que miraba
+        level in L5/L6) y la matriz de personajes (que miraba card_type y
+        full_access): dos criterios distintos para la misma pregunta, listos
+        para divergir. Ahora todo el que necesite saber si a alguien le toca
+        la fachada pregunta acá.
+
+        Ven la identidad real: superusuarios, staff con el permiso explícito,
+        miembros de la propia facción, y tarjetas L5+ o del Comité de Ética.
+        """
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+
+        if getattr(user, "is_superuser", False):
+            return True
+
+        if hasattr(user, "has_permission") and user.has_permission(
+            "view_classified_factions"
+        ):
+            return True
+
+        # Un miembro conoce su propia facción: ocultársela no protege nada.
+        if CharacterFactionMembership.objects.filter(
+            character__owner=user,
+            faction=self,
+            status=CharacterFactionMembership.Status.ACTIVE,
+        ).exists():
+            return True
+
+        card = user.get_highest_access_card() if hasattr(user, "characters") else None
+        if card is None:
+            return False
+
+        return card.level_number >= LEVEL_ORDER["L5"] or (
+            card.card_type == AccessCard.CardType.ETHICS_COMMITTEE
+        )
+
     def get_visible_name(self, user=None):
         """Retorna el nombre según el nivel de acceso del usuario"""
         if self.is_classified and self.facade_name:
-            if user:
-                if getattr(user, "is_superuser", False):
-                    return self.display_name
-                if hasattr(user, "characters"):
-                    highest_card = user.get_highest_access_card()
-                    if highest_card and highest_card.level in ["L5", "L6"]:
-                        return self.display_name
+            if self.can_user_see_real_identity(user):
+                return self.display_name
             return self.facade_name
         return self.display_name
 
@@ -539,7 +588,15 @@ class FactionInvitation(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.character.codename} -> {self.faction.display_name}"
+        # Las invitaciones nuevas van al usuario; character quedó como legacy
+        # nullable, así que no se puede asumir que exista.
+        if self.character_id:
+            target = self.character.codename
+        elif self.user_id:
+            target = self.user.roblox_username or f"#{self.user.roblox_id}"
+        else:
+            target = "(sin destinatario)"
+        return f"{target} -> {self.faction.display_name}"
 
     def accept(self):
         self.status = self.Status.ACCEPTED
@@ -567,6 +624,3 @@ class FactionInvitation(models.Model):
         self.status = self.Status.DECLINED
         self.responded_at = timezone.now()
         self.save()
-
-
-from django.utils import timezone

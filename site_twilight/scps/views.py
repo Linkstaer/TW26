@@ -2,7 +2,24 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 import json
-from .models import SCP, SCPEditLog, Document, DocumentEditLog
+from .models import SCP, SCPActorLog, SCPEditLog, Document, DocumentEditLog
+
+
+def _log_actor_action(scp, user, action, description="", **details):
+    """
+    Registra la acción si quien la hizo es el Actor SCP del archivo (spec §3.4).
+    Devuelve el log creado o None.
+    """
+    if not scp.is_actor(user):
+        return None
+    return SCPActorLog.objects.create(
+        scp=scp,
+        character=scp.actor_character,
+        performed_by=user,
+        action=action,
+        description=description,
+        details=details,
+    )
 
 
 def scp_list(request):
@@ -90,7 +107,194 @@ def scp_edit(request, scp_id):
         edit_reason=reason,
     )
 
+    _log_actor_action(
+        scp,
+        request.user,
+        SCPActorLog.Action.FILE_EDITED,
+        description=f"El actor editó la sección {section.upper()}.",
+        section=section.upper(),
+        reason=reason,
+    )
+
     return JsonResponse({"success": True, "message": f"Sección {section} actualizada"})
+
+
+# ==================== ACTORES SCP (spec §3.4) ====================
+
+
+def _can_manage_actors(user) -> bool:
+    """Quién ata o desata un personaje de un archivo SCP."""
+    return bool(
+        user.is_authenticated
+        and (user.is_superuser or user.has_permission("assign_scp_actor"))
+    )
+
+
+@login_required
+@require_http_methods(["POST", "DELETE"])
+def scp_actor(request, scp_id):
+    """
+    Asigna (POST) o remueve (DELETE) el Actor SCP de un archivo (spec §3.4).
+
+    Al asignar, el archivo pasa a aparecer en el perfil del personaje y el
+    dueño gana permiso de edición sobre ese SCP —y solo sobre ese.
+    """
+    if not _can_manage_actors(request.user):
+        return JsonResponse(
+            {"error": "Sin permisos para gestionar actores SCP"}, status=403
+        )
+
+    try:
+        scp = SCP.objects.select_related("actor_character").get(
+            id=scp_id, is_deleted=False
+        )
+    except SCP.DoesNotExist:
+        return JsonResponse({"error": "SCP no encontrado"}, status=404)
+
+    if request.method == "DELETE":
+        previous = scp.actor_character
+        if previous is None:
+            return JsonResponse({"error": "El SCP no tiene actor asignado"}, status=400)
+
+        scp.actor_character = None
+        scp.save(update_fields=["actor_character", "updated_at"])
+
+        SCPActorLog.objects.create(
+            scp=scp,
+            character=previous,
+            performed_by=request.user,
+            action=SCPActorLog.Action.UNASSIGNED,
+            description=f"{previous.codename} deja de interpretar a {scp.scp_id}.",
+        )
+        return JsonResponse({"success": True, "actor": None})
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+    character_id = data.get("character_id")
+    if not character_id:
+        return JsonResponse({"error": "character_id requerido"}, status=400)
+
+    from characters.models import Character
+
+    try:
+        character = Character.objects.select_related("owner").get(
+            id=character_id, status=Character.Status.ACTIVE
+        )
+    except Character.DoesNotExist:
+        return JsonResponse({"error": "Personaje no encontrado o inactivo"}, status=404)
+
+    # actor_character es OneToOne: un personaje no puede interpretar dos SCPs.
+    existing = SCP.objects.filter(actor_character=character).exclude(id=scp.id).first()
+    if existing is not None:
+        return JsonResponse(
+            {
+                "error": f"{character.codename} ya interpreta a {existing.scp_id}",
+            },
+            status=400,
+        )
+
+    previous = scp.actor_character
+    scp.actor_character = character
+    scp.save(update_fields=["actor_character", "updated_at"])
+
+    if previous is not None and previous.id != character.id:
+        SCPActorLog.objects.create(
+            scp=scp,
+            character=previous,
+            performed_by=request.user,
+            action=SCPActorLog.Action.UNASSIGNED,
+            description=f"{previous.codename} deja de interpretar a {scp.scp_id}.",
+        )
+
+    SCPActorLog.objects.create(
+        scp=scp,
+        character=character,
+        performed_by=request.user,
+        action=SCPActorLog.Action.ASSIGNED,
+        description=f"{character.codename} pasa a interpretar a {scp.scp_id}.",
+        details={"owner": character.owner.roblox_username},
+    )
+
+    return JsonResponse({"success": True, "actor": scp.get_actor_data(request.user)})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def scp_actor_logs(request, scp_id):
+    """
+    Bitácora del Actor SCP (spec §3.4).
+
+    GET: la lee el propio actor, la supervisión de actores y quien pueda
+    editar el archivo. POST: el actor registra una acción de roleplay.
+    """
+    try:
+        scp = SCP.objects.select_related("actor_character").get(
+            id=scp_id, is_deleted=False
+        )
+    except SCP.DoesNotExist:
+        return JsonResponse({"error": "SCP no encontrado"}, status=404)
+
+    is_actor = scp.is_actor(request.user)
+
+    if request.method == "POST":
+        if not is_actor:
+            return JsonResponse(
+                {"error": "Solo el Actor SCP registra acciones de este archivo"},
+                status=403,
+            )
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Datos inválidos"}, status=400)
+
+        description = (data.get("description") or "").strip()
+        if not description:
+            return JsonResponse({"error": "Descripción requerida"}, status=400)
+        if len(description) > 2000:
+            return JsonResponse({"error": "Descripción demasiado larga"}, status=400)
+
+        log = SCPActorLog.objects.create(
+            scp=scp,
+            character=scp.actor_character,
+            performed_by=request.user,
+            action=SCPActorLog.Action.RP_ACTION,
+            description=description,
+        )
+        return JsonResponse({"success": True, "id": log.id}, status=201)
+
+    can_read = (
+        is_actor
+        or request.user.is_superuser
+        or request.user.has_permission("supervise_actors_basic")
+        or scp.can_user_edit(request.user)[0]
+    )
+    if not can_read:
+        return JsonResponse({"error": "Sin permisos"}, status=403)
+
+    logs = scp.actor_logs.select_related("character", "performed_by")[:100]
+    return JsonResponse(
+        {
+            "is_actor": is_actor,
+            "logs": [
+                {
+                    "id": log.id,
+                    "action": log.action,
+                    "action_display": log.get_action_display(),
+                    "description": log.description,
+                    "character": log.character.codename if log.character else None,
+                    "performed_by": log.performed_by.roblox_username
+                    if log.performed_by
+                    else None,
+                    "details": log.details,
+                    "created_at": log.created_at.isoformat(),
+                }
+                for log in logs
+            ],
+        }
+    )
 
 
 def document_list(request):
@@ -141,10 +345,40 @@ def document_detail(request, slug):
             "min_access_level": doc.min_access_level,
             "author": doc.author.roblox_username if doc.author else None,
             "author_faction": doc.author_faction,
+            # Sin esto el frontend no tenía forma de saber si mostrar el botón
+            # de editar, así que la edición de documentos no existía en la UI.
+            "can_edit": _user_can_edit_document(user, doc),
             "created_at": doc.created_at.isoformat() if doc.created_at else None,
             "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
         }
     )
+
+
+def _user_can_edit_document(user, doc) -> bool:
+    """
+    Quién puede editar un documento ya publicado (spec §5.3).
+
+    RAISA / Beta-1 / AD y el Consejo O5 editan cualquiera; el Scientific
+    Department solo procedimientos y reglamentos; el autor, lo suyo.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if doc.author_id == user.id:
+        return True
+
+    card = user.get_highest_access_card()
+    if not card:
+        return False
+    if card.can_edit_any or card.can_edit_o5:
+        return True
+    if card.can_edit_scd:
+        return doc.doc_type in (
+            Document.DocType.PROCEDURE,
+            Document.DocType.REGULATION,
+        )
+    return False
 
 
 @login_required
@@ -158,27 +392,7 @@ def document_edit(request, slug):
     except Document.DoesNotExist:
         return JsonResponse({"error": "Documento no encontrado"}, status=404)
 
-    # Verificar permisos de edición
-    can_edit = False
-
-    if request.user.is_superuser:
-        can_edit = True
-    else:
-        highest_card = request.user.get_highest_access_card()
-        if highest_card:
-            if highest_card.can_edit_any:
-                can_edit = True
-            elif highest_card.can_edit_scd:
-                # ScD puede editar procedimientos
-                if doc.doc_type in [
-                    Document.DocType.PROCEDURE,
-                    Document.DocType.REGULATION,
-                ]:
-                    can_edit = True
-            elif highest_card.can_edit_o5:
-                can_edit = True
-
-    if not can_edit:
+    if not _user_can_edit_document(request.user, doc):
         return JsonResponse({"error": "Sin permisos para editar"}, status=403)
 
     try:
@@ -209,6 +423,39 @@ def document_edit(request, slug):
     )
 
     return JsonResponse({"success": True, "message": "Documento actualizado"})
+
+
+@login_required
+@require_http_methods(["GET"])
+def document_history(request, slug):
+    """
+    Versionado de un documento. DocumentEditLog se escribía en cada edición
+    pero no había forma de leerlo: el historial existía y era invisible.
+    """
+    try:
+        doc = Document.objects.get(slug=slug)
+    except Document.DoesNotExist:
+        return JsonResponse({"error": "Documento no encontrado"}, status=404)
+
+    if not (doc.can_user_view(request.user) and _user_can_edit_document(request.user, doc)):
+        return JsonResponse({"error": "Sin permisos"}, status=403)
+
+    logs = doc.edit_logs.select_related("edited_by")[:50]
+    return JsonResponse(
+        {
+            "history": [
+                {
+                    "id": log.id,
+                    "edited_by": log.edited_by.roblox_username
+                    if log.edited_by
+                    else None,
+                    "edit_summary": log.edit_summary,
+                    "created_at": log.created_at.isoformat(),
+                }
+                for log in logs
+            ]
+        }
+    )
 
 
 @login_required
@@ -303,6 +550,15 @@ def scp_add_appendix(request, scp_id):
         old_content="",
         new_content=f"{title}: {content}",
         edit_reason=data.get("reason", ""),
+    )
+
+    _log_actor_action(
+        scp,
+        request.user,
+        SCPActorLog.Action.APPENDIX_ADDED,
+        description=f"El actor agregó el apéndice «{title}».",
+        title=title,
+        level=level,
     )
 
     return JsonResponse({"success": True, "message": "Apéndice agregado"})

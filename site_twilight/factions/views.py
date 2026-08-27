@@ -603,21 +603,17 @@ def faction_members(request, faction_id):
 @login_required
 def faction_apply(request, faction_id):
     """Solicitar ingreso a una facción"""
-    print(f"DEBUG faction_apply: user={request.user.username}, faction_id={faction_id}")
 
     if request.method != "POST":
         return JsonResponse({"error": "Método no permitido"}, status=405)
 
     try:
         faction = Faction.objects.get(id=faction_id, status=Faction.Status.ACTIVE)
-        print(f"DEBUG: Found faction: {faction.name}")
     except Faction.DoesNotExist:
-        print(f"DEBUG: Faction {faction_id} not found")
         return JsonResponse({"error": "Facción no encontrada"}, status=404)
 
     # Verificar si permite solicitudes públicas
     if not faction.allow_applications:
-        print(f"DEBUG: Faction {faction.name} does not allow applications")
         return JsonResponse(
             {"error": "Esta facción no acepta solicitudes públicas"}, status=400
         )
@@ -625,7 +621,6 @@ def faction_apply(request, faction_id):
     # Verificar si es pública o el usuario es admin/miembro
     if not faction.is_public:
         if not request.user.is_superuser:
-            print(f"DEBUG: Faction {faction.name} is private and user is not superuser")
             return JsonResponse(
                 {"error": "Esta facción es privada. Solo por invitación."}, status=403
             )
@@ -634,20 +629,14 @@ def faction_apply(request, faction_id):
         data = json.loads(request.body)
         character_id = data.get("character_id")
         message = data.get("message", "")
-        print(f"DEBUG: character_id={character_id}, message={message}")
     except json.JSONDecodeError as e:
-        print(f"DEBUG: JSON decode error: {e}")
         return JsonResponse({"error": "Datos inválidos"}, status=400)
 
     from characters.models import Character
 
     try:
         character = Character.objects.get(id=character_id, owner=request.user)
-        print(f"DEBUG: Found character: {character.codename}")
     except Character.DoesNotExist:
-        print(
-            f"DEBUG: Character {character_id} not found for user {request.user.username}"
-        )
         return JsonResponse({"error": "Personaje no encontrado"}, status=404)
 
     # Verificar si ya tiene membresía activa

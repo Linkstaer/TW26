@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 import os
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -31,6 +32,16 @@ DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
 # Dev mode - bypass authentication
 DEV = os.environ.get("DEV", "False").lower() == "true"
+
+# DevAuthMiddleware loguea un superusuario ficticio en cada request cuando DEV
+# está activo: dejarlo encendido en producción entrega el sitio entero. Si
+# alguien setea DEV=True con DEBUG=False, el arranque falla en vez de quedar
+# abierto en silencio.
+if DEV and not DEBUG:
+    raise ImproperlyConfigured(
+        "DEV=True omite la autenticación y no puede usarse con DEBUG=False. "
+        "Quitá DEV del entorno de producción."
+    )
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 

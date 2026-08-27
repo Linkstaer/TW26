@@ -13,9 +13,21 @@ urlpatterns = [
         name="scp_add_appendix",
     ),
     path("scps/<int:scp_id>/history/", views.scp_history, name="scp_history"),
+    # Actores SCP (spec §3.4)
+    path("scps/<int:scp_id>/actor/", views.scp_actor, name="scp_actor"),
+    path(
+        "scps/<int:scp_id>/actor/logs/",
+        views.scp_actor_logs,
+        name="scp_actor_logs",
+    ),
     # Documentos
     path("documents/", views.document_list, name="document_list"),
     path("documents/create/", views.document_create, name="document_create"),
     path("documents/<slug:slug>/", views.document_detail, name="document_detail"),
     path("documents/<slug:slug>/edit/", views.document_edit, name="document_edit"),
+    path(
+        "documents/<slug:slug>/history/",
+        views.document_history,
+        name="document_history",
+    ),
 ]

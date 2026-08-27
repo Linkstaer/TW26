@@ -36,6 +36,15 @@ urlpatterns = [
     path('moderation/bans/', moderation.api_list_bans, name='list_bans'),
     path('moderation/bans/create/', moderation.api_create_ban, name='create_ban'),
     path('moderation/bans/<int:ban_id>/revoke/', moderation.api_revoke_ban, name='revoke_ban'),
+
+    # Apelaciones de ban: las vistas existían desde siempre pero no estaban
+    # ruteadas, así que apelar un ban era literalmente inalcanzable.
+    path('moderation/bans/<int:ban_id>/appeal/', moderation.api_appeal_ban, name='appeal_ban'),
+    path(
+        'moderation/bans/<int:ban_id>/respond-appeal/',
+        moderation.api_respond_ban_appeal,
+        name='respond_ban_appeal',
+    ),
     
     # User-specific
     path('moderation/user/<int:roblox_id>/', moderation.api_get_user_moderation_info, name='user_moderation_info'),
@@ -46,8 +55,13 @@ urlpatterns = [
     # Apeals
     path('moderation/user/appeals/', moderation.api_get_user_appeals, name='user_appeals'),
     
-    # Characters
+    # Characters (spec §1.4 / §6)
     path('moderation/characters/', moderation.api_characters_for_moderation, name='characters_moderation'),
+    path(
+        'moderation/characters/<int:character_id>/',
+        moderation.api_character_moderation_detail,
+        name='character_moderation_detail',
+    ),
     
     # Permissions
     path("auth/user/permissions/", api_get_user_permissions, name="api_get_user_permissions"),

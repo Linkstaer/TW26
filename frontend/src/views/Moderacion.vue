@@ -348,7 +348,44 @@
           </div>
         </div>
 
-        <!-- Tarjeta 7: [REDACTED] -->
+        <!-- Tarjeta 7: Búsqueda de personal (spec §1.4 / §6) -->
+        <div class="moderation-card" :class="{ 'active': activeCard === 7 }" @click="activateCard(7)">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </div>
+            <div class="card-title">BÚSQUEDA DE PERSONAL</div>
+            <div class="card-status" v-if="hasPermission('view_characters_basic')">
+              <span class="status-active">ACCESO CONCEDIDO</span>
+            </div>
+          </div>
+          <div class="card-content">
+            <p class="card-description">Consulta personajes por Roblox Username, User ID o Codename: tarjeta, facción, rango y SCP asignado. Solo lectura.</p>
+            <div class="card-meta">
+              <span class="meta-label">PERMISO REQUERIDO:</span>
+              <span class="meta-value" :class="hasPermission('view_characters_basic') ? 'authorized' : 'denied'">
+                {{ hasPermission('view_characters_basic') ? 'Consulta de Personajes' : 'INSUFICIENTE' }}
+              </span>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="card-action">
+              <button class="action-button" @click.stop="goToCharacterSearch" :disabled="!hasPermission('view_characters_basic')" :class="{ 'disabled': !hasPermission('view_characters_basic') }">
+                <span class="button-text">ACCEDER AL SISTEMA</span>
+                <div class="button-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 8: [REDACTED] -->
         <div class="moderation-card redacted" :class="{ 'active': activeCard === 9 }" @click="showAccessDenied(9)">
           <div class="card-header redacted">
             <div class="card-icon redacted">
@@ -749,6 +786,14 @@ const goToFactionsAdmin = () => {
 
 const goToCardsAdmin = () => {
   router.push('/moderation/cards')
+}
+
+const goToCharacterSearch = () => {
+  if (hasPermission('view_characters_basic')) {
+    router.push('/moderation/characters')
+  } else {
+    showAccessDenied(7)
+  }
 }
 
 const updateTime = () => {

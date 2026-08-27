@@ -34,13 +34,18 @@ STAFF_PERMISSIONS = {
 
     # ───────────── RP: FACTION MODERATION ─────────────
     "rp_faction": {
+        # view_classified_factions: ve el nombre real detrás de la fachada
+        # (spec §2.1). Lo consultaban User.get_visible_factions y
+        # Faction.can_user_see_real_identity, pero no estaba declarado en
+        # ningún scope, así que siempre daba False salvo para superusuarios.
         1: {"access_moderation_dashboard", "moderate_factions_basic"},  # Team Member
-        2: {"moderate_factions_full"},          # Director
+        2: {"moderate_factions_full", "view_classified_factions"},      # Director
     },
 
     # ───────────── RP: ACTORS SUPERVISION ─────────────
     "rp_actors": {
+        # assign_scp_actor: ata un personaje a un archivo SCP (spec §3.4).
         1: {"access_moderation_dashboard", "supervise_actors_basic"},  # Team Member
-        2: {"supervise_actors_full"},           # Director
+        2: {"supervise_actors_full", "assign_scp_actor"},               # Director
     },
 }

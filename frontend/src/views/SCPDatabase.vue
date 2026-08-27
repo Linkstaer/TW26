@@ -61,6 +61,72 @@
         </div>
         <h3 class="detail-title">{{ selectedScp.title }}</h3>
 
+        <!-- Actor SCP (spec §3.4) -->
+        <div v-if="selectedScp.actor || canManageActors" class="actor-banner">
+          <div class="actor-line">
+            <span class="actor-tag">ACTOR SCP</span>
+            <template v-if="selectedScp.actor?.codename">
+              <router-link
+                v-if="selectedScp.actor.owner_roblox_id"
+                :to="`/users/${selectedScp.actor.owner_roblox_id}`"
+                class="actor-link"
+              >
+                {{ selectedScp.actor.codename }}
+              </router-link>
+              <span class="actor-owner" v-if="selectedScp.actor.owner">
+                — {{ selectedScp.actor.owner }}
+              </span>
+            </template>
+            <span v-else-if="selectedScp.actor" class="actor-classified">
+              ASIGNADO · IDENTIDAD RESERVADA
+            </span>
+            <span v-else class="actor-empty">SIN ACTOR ASIGNADO</span>
+          </div>
+          <div class="actor-actions">
+            <button
+              v-if="selectedScp.actor || selectedScp.is_actor"
+              class="btn btn-tiny"
+              @click="toggleActorLogs"
+            >
+              {{ showActorLogs ? 'OCULTAR BITÁCORA' : 'BITÁCORA' }}
+            </button>
+            <button v-if="canManageActors" class="btn btn-tiny" @click="openActorModal">
+              {{ selectedScp.actor ? 'CAMBIAR' : 'ASIGNAR' }}
+            </button>
+            <button
+              v-if="canManageActors && selectedScp.actor"
+              class="btn btn-tiny btn-danger"
+              @click="unassignActor"
+            >
+              REMOVER
+            </button>
+          </div>
+        </div>
+
+        <!-- Bitácora del actor (spec §3.4) -->
+        <div v-if="showActorLogs" class="log-panel">
+          <div class="section-header">
+            <span class="section-level">BITÁCORA DEL ACTOR</span>
+          </div>
+          <div v-if="selectedScp.is_actor" class="edit-area">
+            <textarea
+              v-model="actionDescription"
+              rows="2"
+              placeholder="Registrar una acción de roleplay..."
+            ></textarea>
+            <div class="edit-actions">
+              <button class="btn btn-primary" @click="logActorAction">REGISTRAR</button>
+            </div>
+          </div>
+          <div v-if="!actorLogs.length" class="empty-text">Sin acciones registradas.</div>
+          <div v-for="log in actorLogs" :key="log.id" class="log-item">
+            <span class="log-date">{{ formatDate(log.created_at) }}</span>
+            <span class="log-action">{{ log.action_display }}</span>
+            <span class="log-desc">{{ log.description }}</span>
+            <span class="log-author" v-if="log.performed_by">— {{ log.performed_by }}</span>
+          </div>
+        </div>
+
         <div
           v-for="level in ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']"
           :key="level"
@@ -133,6 +199,69 @@
             Sin apéndices registrados.
           </div>
         </div>
+
+        <!-- Versionado interno (spec §3.1) -->
+        <div v-if="selectedScp.can_edit" class="history-section">
+          <div class="section-header">
+            <span class="section-level">HISTORIAL DE EDICIONES</span>
+            <button class="btn btn-tiny" @click="toggleHistory">
+              {{ showHistory ? 'OCULTAR' : 'VER' }}
+            </button>
+          </div>
+          <template v-if="showHistory">
+            <div v-if="historyLoading" class="loading-text">RECUPERANDO REGISTROS...</div>
+            <div v-else-if="!history.length" class="empty-text">
+              Sin ediciones registradas.
+            </div>
+            <div v-for="entry in history" :key="entry.id" class="log-item">
+              <span class="log-date">{{ formatDate(entry.created_at) }}</span>
+              <span class="log-action">[{{ entry.section }}]</span>
+              <span class="log-author">{{ entry.edited_by || 'desconocido' }}</span>
+              <span class="log-desc" v-if="entry.edit_reason">{{ entry.edit_reason }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Modal asignar Actor SCP -->
+      <div v-if="showActorModal" class="modal-overlay" @click.self="showActorModal = false">
+        <div class="modal">
+          <h3>ASIGNAR ACTOR SCP</h3>
+          <p class="modal-hint">
+            El archivo pasará a aparecer en el perfil del personaje y su dueño podrá
+            editarlo. Todas sus acciones quedan registradas.
+          </p>
+          <input
+            v-model="actorSearch"
+            placeholder="Buscar por codename, nombre o usuario..."
+            @input="searchCharacters"
+          />
+          <div class="actor-results">
+            <div
+              v-for="c in actorCandidates"
+              :key="c.id"
+              class="actor-result"
+              :class="{ selected: selectedCandidate?.id === c.id }"
+              @click="selectedCandidate = c"
+            >
+              <strong>{{ c.character.codename }}</strong>
+              <span class="actor-owner">{{ c.user.username }}</span>
+              <span v-if="c.character.scp_actor" class="actor-taken">
+                ya interpreta a {{ c.character.scp_actor.scp_id }}
+              </span>
+            </div>
+            <div v-if="actorSearch && !actorCandidates.length" class="empty-text">
+              Sin resultados.
+            </div>
+          </div>
+          <div v-if="actorError" class="error-text">{{ actorError }}</div>
+          <div class="edit-actions">
+            <button class="btn btn-primary" :disabled="!selectedCandidate" @click="assignActor">
+              ASIGNAR
+            </button>
+            <button class="btn btn-ghost" @click="showActorModal = false">CANCELAR</button>
+          </div>
+        </div>
       </div>
 
       <!-- Modal crear SCP -->
@@ -180,6 +309,23 @@ const appendixForm = ref({ title: '', content: '', level: 'L1' })
 const showCreateModal = ref(false)
 const createForm = ref({ scp_id: '', title: '', object_class: 'euclid', content_l1: '' })
 
+// Versionado interno (spec §3.1)
+const showHistory = ref(false)
+const history = ref([])
+const historyLoading = ref(false)
+
+// Actores SCP (spec §3.4)
+const canManageActors = ref(false)
+const showActorLogs = ref(false)
+const actorLogs = ref([])
+const actionDescription = ref('')
+const showActorModal = ref(false)
+const actorSearch = ref('')
+const actorCandidates = ref([])
+const selectedCandidate = ref(null)
+const actorError = ref('')
+let searchTimer = null
+
 const getCsrf = () => {
   return document.cookie
     .split('; ')
@@ -213,7 +359,22 @@ const fetchUserAccess = async () => {
     const res = await fetch('/api/auth/user/')
     const user = await res.json()
     canCreate.value = !!user.is_superuser
+
+    const permRes = await fetch('/api/auth/user/permissions/')
+    if (permRes.ok) {
+      const data = await permRes.json()
+      canManageActors.value =
+        !!user.is_superuser || (data.permissions || []).includes('assign_scp_actor')
+    }
   } catch { /* noop */ }
+}
+
+const formatDate = (iso) => {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('es-ES', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  })
 }
 
 const openScp = async (id) => {
@@ -223,7 +384,102 @@ const openScp = async (id) => {
     accessLevels.value = selectedScp.value.accessible_levels || ['L1']
     editingSection.value = null
     showAppendixForm.value = false
+    // Los paneles se cierran al cambiar de archivo: si no, quedan mostrando
+    // el historial del SCP anterior.
+    showHistory.value = false
+    history.value = []
+    showActorLogs.value = false
+    actorLogs.value = []
   }
+}
+
+// --- Versionado (spec §3.1) ---
+
+const toggleHistory = async () => {
+  showHistory.value = !showHistory.value
+  if (!showHistory.value || history.value.length) return
+
+  historyLoading.value = true
+  try {
+    const res = await fetch(`/api/scps/${selectedScp.value.id}/history/`)
+    if (res.ok) history.value = (await res.json()).history || []
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+// --- Actores SCP (spec §3.4) ---
+
+const fetchActorLogs = async () => {
+  const res = await fetch(`/api/scps/${selectedScp.value.id}/actor/logs/`)
+  if (res.ok) actorLogs.value = (await res.json()).logs || []
+}
+
+const toggleActorLogs = async () => {
+  showActorLogs.value = !showActorLogs.value
+  if (showActorLogs.value) await fetchActorLogs()
+}
+
+const logActorAction = async () => {
+  const description = actionDescription.value.trim()
+  if (!description) return
+
+  const res = await fetch(`/api/scps/${selectedScp.value.id}/actor/logs/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
+    body: JSON.stringify({ description })
+  })
+  if (res.ok) {
+    actionDescription.value = ''
+    await fetchActorLogs()
+  }
+}
+
+const openActorModal = () => {
+  showActorModal.value = true
+  actorSearch.value = ''
+  actorCandidates.value = []
+  selectedCandidate.value = null
+  actorError.value = ''
+}
+
+const searchCharacters = () => {
+  // Debounce: el buscador pega a moderación en cada tecla si no.
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(async () => {
+    const q = actorSearch.value.trim()
+    if (q.length < 2) {
+      actorCandidates.value = []
+      return
+    }
+    const res = await fetch(`/api/moderation/characters/?search=${encodeURIComponent(q)}`)
+    if (res.ok) actorCandidates.value = (await res.json()).characters || []
+  }, 300)
+}
+
+const assignActor = async () => {
+  actorError.value = ''
+  const res = await fetch(`/api/scps/${selectedScp.value.id}/actor/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
+    body: JSON.stringify({ character_id: selectedCandidate.value.character.id })
+  })
+  const data = await res.json()
+  if (res.ok) {
+    showActorModal.value = false
+    await openScp(selectedScp.value.id)
+  } else {
+    actorError.value = data.error || 'Error al asignar el actor'
+  }
+}
+
+const unassignActor = async () => {
+  if (!confirm('¿Remover al actor de este archivo?')) return
+  const res = await fetch(`/api/scps/${selectedScp.value.id}/actor/`, {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': getCsrf() }
+  })
+  if (res.ok) await openScp(selectedScp.value.id)
 }
 
 const startEdit = (level) => {
@@ -550,5 +806,129 @@ textarea {
   letter-spacing: 2px;
   color: #e8e8f0;
 }
+.modal-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #8a8a99;
+  line-height: 1.5;
+}
 
+/* --- Actor SCP (spec §3.4) --- */
+.actor-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: rgba(170, 34, 34, 0.08);
+  border: 1px solid rgba(170, 34, 34, 0.4);
+  border-radius: 4px;
+}
+.actor-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.actor-tag {
+  font-size: 0.7rem;
+  letter-spacing: 2px;
+  color: #aa2222;
+  font-weight: 700;
+}
+.actor-link {
+  color: #e8e8f0;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dotted #aa2222;
+}
+.actor-link:hover {
+  color: #ff6b6b;
+}
+.actor-owner {
+  font-size: 0.82rem;
+  color: #8a8a99;
+}
+.actor-classified {
+  font-size: 0.82rem;
+  letter-spacing: 1px;
+  color: #8a8a99;
+}
+.actor-empty {
+  font-size: 0.82rem;
+  color: #6a6a78;
+  font-style: italic;
+}
+.actor-actions {
+  display: flex;
+  gap: 8px;
+}
+.actor-results {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #2a2a35;
+  border-radius: 4px;
+}
+.actor-result {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #1e1e28;
+}
+.actor-result:hover {
+  background: rgba(170, 34, 34, 0.1);
+}
+.actor-result.selected {
+  background: rgba(170, 34, 34, 0.22);
+  border-left: 3px solid #aa2222;
+}
+.actor-taken {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: #c9a227;
+}
+
+/* --- Bitácoras e historial --- */
+.log-panel,
+.history-section {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid #1e1e28;
+}
+.log-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 4px;
+  border-bottom: 1px solid #16161e;
+  font-size: 0.84rem;
+}
+.log-date {
+  color: #6a6a78;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  min-width: 130px;
+}
+.log-action {
+  color: #aa2222;
+  letter-spacing: 1px;
+  font-size: 0.76rem;
+}
+.log-desc {
+  color: #c8c8d2;
+  flex: 1 1 240px;
+}
+.log-author {
+  color: #8a8a99;
+  font-size: 0.78rem;
+}
+.btn-danger {
+  border-color: #aa2222;
+  color: #ff6b6b;
+}
 </style>

@@ -18,6 +18,7 @@ import FaccionesDashboard from "@/views/FaccionesDashboard.vue"
 import FactionLeaderPanel from "@/views/FactionLeaderPanel.vue"
 import FactionAdminPanel from "@/views/ModerationFactions.vue"
 import CardsAdminPanel from "@/views/ModerationCards.vue"
+import ModerationCharacters from "@/views/ModerationCharacters.vue"
 import NotificationsPanel from "@/views/NotificationsPanel.vue"
 import SCPDatabase from "@/views/SCPDatabase.vue"
 import Documentacion from "@/views/Documentacion.vue"
@@ -118,6 +119,13 @@ const routes = [
     path: "/moderation/cards",
     name: "ModerationCards",
     component: CardsAdminPanel,
+    meta: { requiresAuth: true, requiresModeration: true }
+  },
+  {
+    // Búsqueda de personal para moderación (spec §1.4 / §6)
+    path: "/moderation/characters",
+    name: "ModerationCharacters",
+    component: ModerationCharacters,
     meta: { requiresAuth: true, requiresModeration: true }
   },
   {

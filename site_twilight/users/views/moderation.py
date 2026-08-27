@@ -2,12 +2,29 @@ from django.http import JsonResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_exempt
 import json
+import logging
 from users.decorators import require_staff_permission, log_action
 from users.models import User, Warn, Ban, AuditLog
 from characters.models import Character
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+# Un BigIntegerField es un bigint en Postgres. isdigit() acepta "9"*30 e int()
+# lo convierte sin quejarse (Python tiene enteros arbitrarios), pero al llegar
+# a Postgres revienta con "bigint out of range" y la búsqueda devuelve 500.
+# SQLite lo tragaba en silencio, por eso no se veía en desarrollo.
+BIGINT_MAX = 9223372036854775807
+
+
+def parse_roblox_id(value):
+    """Devuelve el roblox_id como int si es un bigint válido, si no None."""
+    value = (value or "").strip()
+    if not value.isdigit():
+        return None
+    number = int(value)
+    return number if number <= BIGINT_MAX else None
 
 
 
@@ -50,10 +67,6 @@ def api_list_warns(request):
 
     """Lista todos los warns con filtros"""
     # Debug: Check user permissions
-    print(f"User: {request.user}")
-    print(f"Is authenticated: {request.user.is_authenticated}")
-    print(f"Is staff: {request.user.is_staff}")
-    print(f"Is superuser: {request.user.is_superuser}")
     
     # Filtros
     status = request.GET.get('status', 'all')
@@ -136,18 +149,14 @@ def api_list_bans(request):
 
 # ==================== WARN OPERATIONS ====================
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("create_warn")
 @log_action("warn_created")
 def api_create_warn(request):
     """Crea un nuevo warn"""
     try:
-        print(f"DEBUG: Creating warn - User: {request.user.roblox_username}")
-        print(f"DEBUG: Request body: {request.body}")
         
         data = json.loads(request.body)
-        print(f"DEBUG: Parsed data: {data}")
         
         target_id = data.get('target_id')
         reason = data.get('reason', '')
@@ -155,20 +164,12 @@ def api_create_warn(request):
         severity = int(data.get('severity', 1))
         expires_after_days = int(data.get('expires_after_days', 30))
         
-        print(f"DEBUG: Target ID: {target_id}")
-        print(f"DEBUG: Reason: {reason}")
-        print(f"DEBUG: Severity: {severity}")
-        print(f"DEBUG: Expires after days: {expires_after_days}")
         
         if not target_id:
-            print("ERROR: target_id is required")
             return JsonResponse({"error": "target_id is required"}, status=400)
         
-        print(f"DEBUG: Looking for user with roblox_id: {target_id}")
         target = get_object_or_404(User, roblox_id=target_id)
-        print(f"DEBUG: Found target user: {target.roblox_username}")
         
-        print("DEBUG: Creating warn object...")
         warn = Warn.objects.create(
             target=target,
             created_by=request.user,
@@ -178,7 +179,6 @@ def api_create_warn(request):
             expires_after_days=expires_after_days
         )
         
-        print(f"DEBUG: Warn created successfully with ID: {warn.id}")
         
         # Registrar en audit log (también manejado por el decorador)
         AuditLog.log_action(
@@ -203,19 +203,14 @@ def api_create_warn(request):
         })
     
     except json.JSONDecodeError as e:
-        print(f"ERROR: Invalid JSON: {e}")
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     except ValueError as e:
-        print(f"ERROR: Value error: {e}")
         return JsonResponse({"error": f"Invalid data: {str(e)}"}, status=400)
-    except Exception as e:
-        print(f"ERROR: Unexpected error in api_create_warn: {str(e)}")
-        import traceback
-        print(f"ERROR: Traceback: {traceback.format_exc()}")
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("manage_warns")
 @log_action("warn_updated")
@@ -260,11 +255,11 @@ def api_update_warn(request, warn_id):
             "message": "Warn updated"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("manage_warns")
 @log_action("warn_removed")
@@ -297,13 +292,13 @@ def api_remove_warn(request, warn_id):
             "message": "Warn removed"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
 # ==================== APPEAL SYSTEM ====================
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @log_action("warn_appealed")
 def api_appeal_warn(request, warn_id):
@@ -347,11 +342,11 @@ def api_appeal_warn(request, warn_id):
             "cooldown_info": request.user.get_appeal_cooldown()
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("manage_warns")
 @log_action("warn_appeal_responded")
@@ -387,13 +382,13 @@ def api_respond_appeal(request, warn_id):
             "message": "Appeal response saved"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
 # ==================== BAN OPERATIONS ====================
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("register_ban")
 @log_action("ban_created")
@@ -454,11 +449,11 @@ def api_create_ban(request):
             "ends_at": ban.ends_at.isoformat() if ban.ends_at else None
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("register_ban")
 @log_action("ban_revoked")
@@ -493,8 +488,9 @@ def api_revoke_ban(request, ban_id):
             "message": "Ban revoked"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
 # ==================== USER SPECIFIC ====================
@@ -574,50 +570,190 @@ def api_get_user_moderation_info(request, roblox_id):
             ]
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 
 # ==================== CHARACTER MODERATION ====================
 
+def _character_moderation_row(character, membership, viewer):
+    """
+    Vista de personaje para moderación (spec §6): tarjeta, facción y rango
+    respetando fachadas, SCP asignado si es Actor, y estado del personaje.
+    """
+    faction_data = None
+    if membership:
+        faction = membership.faction
+        card = membership.access_card
+        faction_data = {
+            "id": faction.id,
+            # Las fachadas también aplican a moderación salvo que el rol
+            # tenga el permiso explícito (spec §6: "respetando fachadas").
+            "name": faction.get_visible_name(viewer),
+            "is_classified": faction.is_classified,
+            "rank": membership.rank.name if membership.rank else None,
+            "card": card.display_name if card else None,
+            "card_level": card.level if card else None,
+        }
+
+    scp_actor = character.get_scp_actor_data()
+
+    return {
+        "id": character.id,
+        "user": {
+            "id": character.owner.roblox_id,
+            "internal_id": character.owner.id,
+            "username": character.owner.roblox_username,
+            "warning_count": character.owner.warning_count,
+            "is_banned": character.owner.is_banned,
+            "profile_url": f"/users/{character.owner.roblox_id}",
+        },
+        "character": {
+            "id": character.id,
+            "codename": character.codename,
+            "name": f"{character.first_name} {character.last_name}".strip(),
+            "status": character.status,
+            "status_display": character.get_status_display(),
+            "faction": faction_data,
+            "access_card": faction_data["card"] if faction_data else None,
+            "scp_actor": scp_actor,
+            "profile_url": f"/dashboard/personnel?character={character.id}",
+            "scp_url": f"/dashboard/scps?scp={scp_actor['id']}" if scp_actor else None,
+        },
+    }
+
+
 @require_staff_permission("view_characters_basic")
+@require_http_methods(["GET"])
 def api_characters_for_moderation(request):
-    """Lista personajes para moderación"""
-    characters = (
-        Character.objects
-        .select_related("owner", "faction", "access_card")
-        .all()
+    """
+    Búsqueda de personajes para moderación (spec §1.4 / §6).
+
+    Acepta ?search= por codename, nombre real, apellido, Roblox username o
+    Roblox User ID. Es solo lectura: moderación no edita personajes ni
+    tarjetas (restricción explícita del spec §1.4).
+    """
+    search_query = (request.GET.get("search") or "").strip()
+
+    characters = Character.objects.select_related("owner", "scp_file").order_by(
+        "codename"
     )
 
+    if search_query:
+        filters = (
+            Q(codename__icontains=search_query)
+            | Q(first_name__icontains=search_query)
+            | Q(last_name__icontains=search_query)
+            | Q(owner__roblox_username__icontains=search_query)
+        )
+        roblox_id = parse_roblox_id(search_query)
+        if roblox_id is not None:
+            filters |= Q(owner__roblox_id=roblox_id)
+        characters = characters.filter(filters)
+
+    characters = list(characters[:100])
+
+    from factions.models import CharacterFactionMembership
+
+    membership_by_char = {
+        m.character_id: m
+        for m in CharacterFactionMembership.objects.filter(
+            character_id__in=[c.id for c in characters],
+            status=CharacterFactionMembership.Status.ACTIVE,
+        ).select_related("faction", "rank", "access_card")
+    }
+
     data = [
-        {
-            "id": c.id,
-            "user": {
-                "username": c.owner.roblox_username,
-                "id": c.owner.roblox_id,
-                "warning_count": c.owner.warning_count,
-                "is_banned": c.owner.is_banned,
-            },
-            "character": {
-                "name": c.display_name,
-                "codename": c.codename,
-                "faction": c.faction.display_name if c.faction else None,
-                "status": c.status,
-            }
-        }
+        _character_moderation_row(c, membership_by_char.get(c.id), request.user)
         for c in characters
     ]
 
-    return JsonResponse({"characters": data})
+    return JsonResponse({"characters": data, "count": len(data)})
 
+
+@require_staff_permission("view_characters_basic")
+@require_http_methods(["GET"])
+def api_character_moderation_detail(request, character_id):
+    """
+    Vista consolidada de un personaje (spec §6): tarjeta, facción y rango,
+    SCP asignado, estado, solicitudes activas e historial básico de acciones.
+    """
+    from factions.models import CharacterFactionMembership, FactionApplication, FactionLog
+
+    character = get_object_or_404(
+        Character.objects.select_related("owner", "scp_file"), id=character_id
+    )
+
+    membership = (
+        CharacterFactionMembership.objects.filter(
+            character=character, status=CharacterFactionMembership.Status.ACTIVE
+        )
+        .select_related("faction", "rank", "access_card")
+        .first()
+    )
+
+    row = _character_moderation_row(character, membership, request.user)
+
+    # Solicitudes activas del personaje
+    applications = FactionApplication.objects.filter(
+        character=character, status=FactionApplication.Status.PENDING
+    ).select_related("faction")
+
+    # Historial básico: joins, cambios de facción, asignaciones clave
+    history = FactionLog.objects.filter(character=character).select_related(
+        "faction", "performed_by"
+    )[:30]
+
+    row["pending_applications"] = [
+        {
+            "id": app.id,
+            "faction": app.faction.get_visible_name(request.user),
+            "created_at": app.created_at.isoformat(),
+        }
+        for app in applications
+    ]
+    row["history"] = [
+        {
+            "action": log.action_type,
+            "action_display": log.get_action_type_display(),
+            "faction": log.faction.get_visible_name(request.user),
+            "performed_by": log.performed_by.roblox_username
+            if log.performed_by
+            else None,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in history
+    ]
+    row["actor_logs"] = [
+        {
+            "action": log.get_action_display(),
+            "description": log.description,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in character.scp_actor_logs.all()[:20]
+    ]
+
+    return JsonResponse(row)
+
+
+@require_staff_permission("access_moderation_dashboard")
+@require_http_methods(["GET"])
 def api_search_users(request, query):
-    """Buscar usuarios por ID o username"""
+    """
+    Buscar usuarios por Roblox User ID o Roblox Username (spec §6).
+
+    Antes esta vista no tenía decorador alguno: cualquier anónimo podía
+    enumerar la base de usuarios con roblox_id, flags de staff y estado de ban.
+    """
     try:
-        print(f"DEBUG: Searching for user with query: {query}")
-        
         # Intentar buscar por ID primero
-        if query.isdigit():
-            users = User.objects.filter(roblox_id=int(query))
+        roblox_id = parse_roblox_id(query)
+        if roblox_id is not None:
+            users = User.objects.filter(roblox_id=roblox_id)
+        elif query.isdigit():
+            # Dígitos, pero fuera del rango de un bigint: no puede existir.
+            users = User.objects.none()
         else:
             # Buscar por username (case insensitive)
             users = User.objects.filter(
@@ -639,20 +775,15 @@ def api_search_users(request, query):
                 'first_login': user.first_login.isoformat() if user.first_login else None,
             })
         
-        print(f"DEBUG: Found {len(data)} users")
-        if data:
-            print(f"DEBUG: First user: {data[0]}")
-        
         return JsonResponse({
             'results': data,
             'count': len(data)
         })
         
-    except Exception as e:
-        print(f"ERROR in api_search_users: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({'error': 'Error interno'}, status=500)
     
-@csrf_exempt
 @require_http_methods(["GET"])
 def api_get_user_appeals(request):
     """Obtiene todas las apelaciones del usuario actual"""
@@ -663,7 +794,6 @@ def api_get_user_appeals(request):
         user = request.user
         
         # Debug log
-        print(f"DEBUG: Getting appeals for user {user.roblox_username} ({user.id})")
         
         # 1. Obtener TODOS los warns del usuario que estén apelados
         appealed_warns = Warn.objects.filter(
@@ -671,7 +801,6 @@ def api_get_user_appeals(request):
             appealed=True
         ).order_by('-appealed_at')
         
-        print(f"DEBUG: Found {appealed_warns.count()} appealed warns")
         
         # 2. Obtener TODOS los bans del usuario que estén apelados
         appealed_bans = Ban.objects.filter(
@@ -679,7 +808,6 @@ def api_get_user_appeals(request):
             appealed=True
         ).order_by('-appealed_at')
         
-        print(f"DEBUG: Found {appealed_bans.count()} appealed bans")
         
         # 3. Obtener warns que PUEDEN ser apelados (no apelados aún)
         appealable_warns = Warn.objects.filter(
@@ -688,7 +816,6 @@ def api_get_user_appeals(request):
             status=Warn.WarnStatus.ACTIVE
         ).order_by('-created_at')
         
-        print(f"DEBUG: Found {appealable_warns.count()} appealable warns")
         
         # 4. Obtener bans que PUEDEN ser apelados (no apelados aún)
         appealable_bans = Ban.objects.filter(
@@ -698,7 +825,6 @@ def api_get_user_appeals(request):
             can_appeal=True
         ).order_by('-created_at')
         
-        print(f"DEBUG: Found {appealable_bans.count()} appealable bans")
         
         # Formatear warns apelados (para historial)
         appealed_warnings_data = []
@@ -820,7 +946,6 @@ def api_get_user_appeals(request):
         # Obtener cooldown del usuario
         cooldown_info = user.get_appeal_cooldown()
         
-        print(f"DEBUG: Cooldown info: {cooldown_info}")
         
         return JsonResponse({
             "appealed_warnings": appealed_warnings_data,      # Apelados (historial)
@@ -830,15 +955,12 @@ def api_get_user_appeals(request):
             "appeal_cooldown": cooldown_info
         })
     
-    except Exception as e:
-        print(f"ERROR en api_get_user_appeals: {str(e)}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
 # ==================== BAN APPEAL SYSTEM ====================
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @log_action("ban_appealed")
 def api_appeal_ban(request, ban_id):
@@ -881,10 +1003,10 @@ def api_appeal_ban(request, ban_id):
             "message": "Appeal submitted"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)
 
-@csrf_exempt
 @require_http_methods(["POST"])
 @require_staff_permission("register_ban")
 @log_action("ban_appeal_responded")
@@ -922,5 +1044,6 @@ def api_respond_ban_appeal(request, ban_id):
             "message": "Appeal response saved"
         })
     
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Error en %s", request.path)
+        return JsonResponse({"error": "Error interno"}, status=500)

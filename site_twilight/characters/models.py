@@ -190,6 +190,27 @@ class Character(models.Model):
             return f"run {' & '.join(cmds)}"
         return ""
 
+    @property
+    def is_scp_actor(self) -> bool:
+        """El personaje interpreta a un SCP (spec §3.4)."""
+        return hasattr(self, "scp_file") and self.scp_file is not None
+
+    def get_scp_actor_data(self):
+        """
+        Archivo SCP que interpreta este personaje, para mostrarlo en su perfil
+        (spec §3.4). None si no es Actor SCP.
+        """
+        scp = getattr(self, "scp_file", None)
+        if scp is None or scp.is_deleted:
+            return None
+        return {
+            "id": scp.id,
+            "scp_id": scp.scp_id,
+            "title": scp.title,
+            "object_class": scp.object_class,
+            "object_class_display": scp.get_object_class_display(),
+        }
+
     def get_access_level(self) -> str:
         """
         Nivel de la tarjeta asignada al personaje vía su membresía activa (spec §1.3).
@@ -230,11 +251,6 @@ class Character(models.Model):
             "crtag_b": 255 if self.crtag_b is None else self.crtag_b,
         }
         
-        # Si nvg_color está vacío pero tenemos valores RGB separados
-        nvg_color = self.nvg_color
-        if not nvg_color and self.nvg_r is not None:
-            nvg_color = f"{self.nvg_r},{self.nvg_g},{self.nvg_b}"
-        
         return {
             "id": self.id,
             "codename": self.codename,
@@ -249,10 +265,10 @@ class Character(models.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "morph": self.morph,
             "hat": self.hat,
-            "nvg_color": nvg_color,
-            "nvg_r": self.nvg_r if self.nvg_r is not None else 255,
-            "nvg_g": self.nvg_g if self.nvg_g is not None else 165,
-            "nvg_b": self.nvg_b if self.nvg_b is not None else 0,
+            # nvg es un solo campo de texto (nvg_color). Antes esto leía
+            # self.nvg_r/g/b, que no existen en el modelo: cualquier llamada
+            # a to_dict() reventaba con AttributeError.
+            "nvg_color": self.nvg_color,
             "shirt": self.shirt,
             "pants": self.pants,
             **skin_data,

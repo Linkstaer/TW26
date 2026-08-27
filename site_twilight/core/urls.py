@@ -23,5 +23,4 @@ urlpatterns = [
         users.api_get_user_characters,
         name="api_get_user_characters",
     ),
-    path("", include("characters.urls")),
 ]

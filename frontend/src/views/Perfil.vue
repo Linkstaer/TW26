@@ -124,9 +124,52 @@
                 <span class="stat-number">{{ formatDate(profileUser.first_login) }}</span>
                 <span class="stat-label">REGISTRO</span>
               </div>
+              <!-- Acceso derivado de la tarjeta más alta (spec §1.2 / §2.4) -->
+              <div class="stat-item" v-if="profileUser.access_card">
+                <span class="stat-number clearance">{{ profileUser.access_card.level }}</span>
+                <span class="stat-label">CLEARANCE</span>
+              </div>
             </div>
           </div>
-          
+
+          <!-- Tarjeta de acceso derivada, roles especiales y facciones (spec §1.2) -->
+          <div class="clearance-panel" v-if="profileUser.access_card">
+            <div class="clearance-row">
+              <span class="clearance-label">TARJETA MÁS ALTA</span>
+              <span class="clearance-value">
+                {{ profileUser.access_card.name || 'Sin tarjeta asignada' }}
+              </span>
+            </div>
+
+            <div class="clearance-row" v-if="profileUser.special_roles?.length">
+              <span class="clearance-label">ROLES ESPECIALES</span>
+              <span class="role-list">
+                <span
+                  v-for="(role, i) in profileUser.special_roles"
+                  :key="i"
+                  class="role-chip"
+                  :class="'role-' + role.kind"
+                >
+                  {{ role.name }}
+                </span>
+              </span>
+            </div>
+
+            <div class="clearance-row" v-if="profileUser.factions?.length">
+              <span class="clearance-label">FACCIONES ACTIVAS</span>
+              <span class="role-list">
+                <span
+                  v-for="faction in profileUser.factions"
+                  :key="faction.id + '-' + faction.character"
+                  class="faction-chip"
+                >
+                  {{ faction.name }}
+                  <template v-if="faction.rank"> · {{ faction.rank }}</template>
+                </span>
+              </span>
+            </div>
+          </div>
+
           <!-- Indicador de permisos -->
           <div class="permissions-indicator" v-if="profileUser.is_staff || profileUser.is_superuser">
             <div class="permissions-icon">
@@ -211,7 +254,10 @@
                   <div class="header-gradient"></div>
                   <div class="codename-container">
                     <h3 class="character-codename">{{ character.codename }}</h3>
-                    <div class="id-badge">ID: #{{ character.id.toString().padStart(6, '0') }}</div>
+                    <div class="badge-row">
+                      <div v-if="character.is_scp_actor" class="actor-badge">ACTOR SCP</div>
+                      <div class="id-badge">ID: #{{ character.id.toString().padStart(6, '0') }}</div>
+                    </div>
                   </div>
                 </div>
                 
@@ -398,6 +444,18 @@
                 <div class="detail-item">
                   <span class="detail-label">Registrado:</span>
                   <span class="detail-value">{{ formatDateDDMMYYYY(selectedCharacter.created_at) }}</span>
+                </div>
+                <!-- Actor SCP (spec §3.4): el archivo aparece en el perfil -->
+                <div class="detail-item" v-if="selectedCharacter.scp_actor">
+                  <span class="detail-label">Archivo SCP:</span>
+                  <span class="detail-value">
+                    <router-link class="scp-link" :to="`/dashboard/scps?scp=${selectedCharacter.scp_actor.id}`">
+                      {{ selectedCharacter.scp_actor.scp_id }} — {{ selectedCharacter.scp_actor.title }}
+                    </router-link>
+                    <span class="scp-class">
+                      {{ selectedCharacter.scp_actor.object_class_display }}
+                    </span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -2611,6 +2669,98 @@ body.modal-open {
 body.modal-open .perfil-page {
   overflow: hidden;
   height: 100vh;
+}
+
+/* --- Acceso derivado, roles especiales y facciones (spec §1.2) --- */
+.clearance-panel {
+  margin-top: 18px;
+  padding: 16px 20px;
+  background: rgba(252, 111, 3, 0.05);
+  border: 1px solid rgba(252, 111, 3, 0.25);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.clearance-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.clearance-label {
+  font-size: 0.65rem;
+  letter-spacing: 2px;
+  color: #8a8a99;
+  min-width: 150px;
+}
+.clearance-value {
+  color: #e8e8f0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.role-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.role-chip,
+.faction-chip {
+  font-size: 0.72rem;
+  padding: 3px 10px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.role-chip.role-staff {
+  color: #fc6f03;
+  border: 1px solid rgba(252, 111, 3, 0.5);
+  background: rgba(252, 111, 3, 0.1);
+}
+.role-chip.role-rp {
+  color: #c9a227;
+  border: 1px solid rgba(201, 162, 39, 0.5);
+  background: rgba(201, 162, 39, 0.1);
+}
+.faction-chip {
+  color: #b9b9c4;
+  border: 1px solid #33333f;
+  background: rgba(255, 255, 255, 0.03);
+}
+.stat-number.clearance {
+  color: #ffb300;
+}
+
+/* --- Actor SCP (spec §3.4) --- */
+.badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.actor-badge {
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 107, 107, 0.5);
+  background: rgba(170, 34, 34, 0.15);
+  white-space: nowrap;
+}
+.scp-link {
+  color: #fc6f03;
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(252, 111, 3, 0.6);
+}
+.scp-link:hover {
+  color: #ff9440;
+}
+.scp-class {
+  margin-left: 8px;
+  font-size: 0.7rem;
+  color: #8a8a99;
+  letter-spacing: 1px;
 }
 
 </style>
